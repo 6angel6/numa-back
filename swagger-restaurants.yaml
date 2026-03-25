@@ -1,0 +1,1274 @@
+openapi: 3.0.3
+info:
+  title: Numa Restaurant & Nutrition Delivery API
+  description: |
+    API для двух типов ресторанных сервисов:
+
+    ## 🍽️ Restaurant (Бронирование столов)
+    Референс: [syrovarnya.com](https://www.syrovarnya.com/franchise)
+    - Бронирование столов с депозитами
+    - Оплата через Click/Payme
+    - CMS для управления столами и бронями
+
+    ## 🥗 FoodTech (Доставка здорового питания)
+    Референс: [growfood.pro](https://growfood.pro)
+    - **Календарное меню** — админы назначают блюда на конкретные даты
+    - **Авто-калькулятор КБЖУ** — расчёт на день и весь заказ
+    - **Мягкие фильтры** — исключение аллергенов (рыба, орехи, молочное...)
+    - **Добавки** — напитки, снеки, протеин
+    - **Слоты доставки** — выбор времени на конкретную дату
+
+    ## Authentication
+    CMS endpoints требуют **Bearer JWT token**.
+    Получить: `POST /admin/login`
+
+    ## Permissions
+    | Resource | Read | Write | Delete |
+    |----------|------|-------|--------|
+    | Dishes | dishes:read | dishes:write | dishes:delete |
+    | Schedule | dishes:read | dishes:write | dishes:delete |
+    | Addons | dishes:read | dishes:write | dishes:delete |
+    | Tags | dishes:read | dishes:write | dishes:delete |
+    | Delivery Slots | delivery_slots:read | delivery_slots:write | - |
+    | Tables | tables:read | tables:write | - |
+    | Reservations | reservations:read | reservations:write | - |
+
+  version: 2.0.0
+
+servers:
+  - url: http://localhost:5000/api/v1
+    description: Local development
+  - url: https://api.numa.uz/api/v1
+    description: Production
+
+tags:
+  # ═══ FOODTECH (NUTRITION) ═══════════════════════════════════════════════════
+  - name: "🥗 FoodTech: Calendar Menu"
+    description: Календарное меню по дням с мягкими фильтрами
+  - name: "🥗 FoodTech: Addons"
+    description: Добавки (напитки, снеки, протеин)
+  - name: "🥗 FoodTech: Cart"
+    description: Корзина по дням с калькулятором КБЖУ
+  - name: "🥗 FoodTech: Checkout"
+    description: Оформление заказа
+  - name: "🥗 FoodTech: CMS Dishes"
+    description: Управление блюдами (requires auth + dishes:*)
+  - name: "🥗 FoodTech: CMS Schedule"
+    description: Управление расписанием меню по датам
+  - name: "🥗 FoodTech: CMS Addons"
+    description: Управление добавками
+  - name: "🥗 FoodTech: CMS Tags"
+    description: Управление тегами/аллергенами
+  - name: "🥗 FoodTech: CMS Slots"
+    description: Управление слотами доставки
+
+  # ═══ RESTAURANT ═══════════════════════════════════════════════════════════
+  - name: "🍽️ Restaurant: Tables"
+    description: Публичный просмотр доступных столов
+  - name: "🍽️ Restaurant: Reservations"
+    description: Бронирование столов с оплатой депозита
+  - name: "🍽️ Restaurant: CMS Tables"
+    description: Управление столами
+  - name: "🍽️ Restaurant: CMS Reservations"
+    description: Управление бронями
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    # ═══ COMMON ═════════════════════════════════════════════════════════════
+    LocalizedText:
+      type: object
+      required: [uz, ru, en]
+      properties:
+        uz: { type: string }
+        ru: { type: string }
+        en: { type: string }
+
+    # ═══ FOODTECH: TAG ══════════════════════════════════════════════════════
+    Tag:
+      type: object
+      properties:
+        slug: { type: string, example: "fish" }
+        name: { $ref: "#/components/schemas/LocalizedText" }
+        type:
+          type: string
+          enum: [allergen, dietary, category]
+          description: "allergen=для исключения, dietary=стиль питания"
+        icon: { type: string, nullable: true }
+
+    # ═══ FOODTECH: DISH ═════════════════════════════════════════════════════
+    Dish:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { $ref: "#/components/schemas/LocalizedText" }
+        description: { $ref: "#/components/schemas/LocalizedText" }
+        imageUrl: { type: string, nullable: true }
+        mealType:
+          type: string
+          enum: [breakfast, lunch, dinner, snack]
+          description: "Тип приёма пищи"
+        calories: { type: integer, example: 450 }
+        proteins: { type: number, example: 25.5 }
+        fats: { type: number, example: 15.2 }
+        carbs: { type: number, example: 45.0 }
+        servingSize: { type: string, example: "350g" }
+        weightGrams: { type: integer, example: 350 }
+        priceTiyin: { type: integer, description: "Цена в тийинах" }
+        ingredients:
+          type: array
+          items: { type: string }
+          example: ["курица", "рис", "овощи"]
+        tags:
+          type: array
+          items: { $ref: "#/components/schemas/Tag" }
+        isActive: { type: boolean }
+
+    DishInput:
+      type: object
+      required: [name, mealType, calories, proteins, fats, carbs]
+      properties:
+        name: { $ref: "#/components/schemas/LocalizedText" }
+        description: { $ref: "#/components/schemas/LocalizedText" }
+        imageUrl: { type: string }
+        mealType: { type: string, enum: [breakfast, lunch, dinner, snack] }
+        calories: { type: integer }
+        proteins: { type: number }
+        fats: { type: number }
+        carbs: { type: number }
+        servingSize: { type: string }
+        weightGrams: { type: integer }
+        priceTiyin: { type: integer }
+        ingredients: { type: array, items: { type: string } }
+        tagIds:
+          type: array
+          items: { type: string, format: uuid }
+          description: "Массив UUID тегов/аллергенов"
+        isActive: { type: boolean, default: true }
+        sortOrder: { type: integer, default: 0 }
+
+    # ═══ FOODTECH: ADDON ════════════════════════════════════════════════════
+    Addon:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { $ref: "#/components/schemas/LocalizedText" }
+        description: { $ref: "#/components/schemas/LocalizedText" }
+        imageUrl: { type: string, nullable: true }
+        category:
+          type: string
+          enum: [drink, snack, dessert, supplement, other]
+        calories: { type: integer }
+        proteins: { type: number }
+        fats: { type: number }
+        carbs: { type: number }
+        priceTiyin: { type: integer }
+        maxPerDay: { type: integer, nullable: true }
+
+    # ═══ FOODTECH: MENU SCHEDULE ITEM ═══════════════════════════════════════
+    MenuDayItem:
+      type: object
+      properties:
+        scheduleId: { type: string, format: uuid }
+        dish: { $ref: "#/components/schemas/Dish" }
+        effectivePriceTiyin: { type: integer, description: "Цена (с учётом override)" }
+        remainingPortions: { type: integer, nullable: true }
+        isAvailable: { type: boolean }
+        isExcludedByFilter: { type: boolean, description: "Исключено фильтром аллергенов" }
+        matchedAllergens:
+          type: array
+          items: { type: string }
+          description: "Какие аллергены совпали"
+
+    # ═══ FOODTECH: MENU DAY ═════════════════════════════════════════════════
+    MenuDay:
+      type: object
+      properties:
+        date: { type: string, format: date }
+        dayOfWeek: { type: integer, description: "0=Вс, 1=Пн..." }
+        formattedDate: { type: string, example: "Пт, 21 мар" }
+        meals:
+          type: object
+          properties:
+            breakfast: { type: array, items: { $ref: "#/components/schemas/MenuDayItem" } }
+            lunch: { type: array, items: { $ref: "#/components/schemas/MenuDayItem" } }
+            dinner: { type: array, items: { $ref: "#/components/schemas/MenuDayItem" } }
+            snack: { type: array, items: { $ref: "#/components/schemas/MenuDayItem" } }
+        slots:
+          type: array
+          items: { $ref: "#/components/schemas/DeliverySlot" }
+
+    # ═══ FOODTECH: WEEKLY MENU ══════════════════════════════════════════════
+    WeeklyMenu:
+      type: object
+      properties:
+        startDate: { type: string, format: date }
+        endDate: { type: string, format: date }
+        days:
+          type: array
+          items: { $ref: "#/components/schemas/MenuDay" }
+        addons:
+          type: array
+          items: { $ref: "#/components/schemas/Addon" }
+        availableFilters:
+          type: array
+          items: { $ref: "#/components/schemas/Tag" }
+
+    # ═══ FOODTECH: DELIVERY SLOT ════════════════════════════════════════════
+    DeliverySlot:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        timeStart: { type: string, example: "10:00" }
+        timeEnd: { type: string, example: "14:00" }
+        label: { $ref: "#/components/schemas/LocalizedText" }
+        status: { type: string, enum: [available, full, closed, past] }
+        remainingCapacity: { type: integer }
+        deliveryFeeTiyin: { type: integer }
+        minOrderTiyin: { type: integer }
+
+    # ═══ FOODTECH: CART (Calendar-based) ════════════════════════════════════
+    CartDay:
+      type: object
+      properties:
+        date: { type: string, format: date }
+        deliverySlotId: { type: string, format: uuid, nullable: true }
+        meals:
+          type: object
+          properties:
+            breakfast: { $ref: "#/components/schemas/CartMeal" }
+            lunch: { $ref: "#/components/schemas/CartMeal" }
+            dinner: { $ref: "#/components/schemas/CartMeal" }
+            snack: { $ref: "#/components/schemas/CartMeal" }
+        addons:
+          type: array
+          items:
+            type: object
+            properties:
+              addonId: { type: string, format: uuid }
+              quantity: { type: integer }
+
+    CartMeal:
+      type: object
+      nullable: true
+      properties:
+        dishId: { type: string, format: uuid }
+        scheduleId: { type: string, format: uuid }
+        quantity: { type: integer }
+
+    CalendarCart:
+      type: object
+      properties:
+        sessionToken: { type: string }
+        days:
+          type: array
+          items: { $ref: "#/components/schemas/CartDay" }
+        preferences:
+          type: object
+          properties:
+            excludeAllergens:
+              type: array
+              items: { type: string }
+              example: ["fish", "nuts"]
+
+    # ═══ RESTAURANT: TABLE ══════════════════════════════════════════════════
+    RestaurantTable:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        tableNumber: { type: string, example: "A-12" }
+        capacity: { type: integer, example: 4 }
+        location: { type: string, example: "terrace" }
+        description: { $ref: "#/components/schemas/LocalizedText" }
+        minDeposit: { type: integer, description: "Минимальный депозит в тийинах" }
+        imageUrl: { type: string, nullable: true }
+        isActive: { type: boolean }
+
+    # ═══ RESTAURANT: RESERVATION ════════════════════════════════════════════
+    Reservation:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        tableId: { type: string, format: uuid }
+        customerName: { type: string }
+        customerPhone: { type: string }
+        reservationDate: { type: string, format: date }
+        startTime: { type: string, example: "19:00" }
+        endTime: { type: string, example: "21:00" }
+        partySize: { type: integer }
+        depositAmount: { type: integer }
+        status:
+          type: string
+          enum: [pending_payment, confirmed, cancelled, completed, no_show]
+        notes: { type: string, nullable: true }
+
+paths:
+  # ═══════════════════════════════════════════════════════════════════════════
+  # 🥗 FOODTECH: CALENDAR MENU (PUBLIC)
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  /nutrition/menu/weekly:
+    get:
+      tags: ["🥗 FoodTech: Calendar Menu"]
+      summary: Меню на неделю с мягкими фильтрами
+      description: |
+        Возвращает меню по дням с возможностью фильтрации по аллергенам.
+        Блюда помечаются `isExcludedByFilter: true` если содержат исключённые аллергены.
+      parameters:
+        - name: startDate
+          in: query
+          description: "Начальная дата (default: завтра)"
+          schema: { type: string, format: date }
+        - name: days
+          in: query
+          description: "Кол-во дней (default: 7, max: 30)"
+          schema: { type: integer, default: 7 }
+        - name: excludeAllergens
+          in: query
+          description: "Comma-separated: fish,nuts,dairy"
+          schema: { type: string }
+          example: "fish,nuts"
+      responses:
+        '200':
+          description: Меню на неделю
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/WeeklyMenu" }
+                  meta:
+                    type: object
+                    properties:
+                      startDate: { type: string, format: date }
+                      endDate: { type: string, format: date }
+                      daysCount: { type: integer }
+                      excludedAllergens: { type: array, items: { type: string } }
+
+  /nutrition/menu/day/{date}:
+    get:
+      tags: ["🥗 FoodTech: Calendar Menu"]
+      summary: Меню на один день
+      parameters:
+        - name: date
+          in: path
+          required: true
+          schema: { type: string, format: date }
+        - name: excludeAllergens
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Меню дня
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/MenuDay" }
+
+  /nutrition/menu/dates:
+    get:
+      tags: ["🥗 FoodTech: Calendar Menu"]
+      summary: Доступные даты для заказа
+      parameters:
+        - name: daysAhead
+          in: query
+          schema: { type: integer, default: 14 }
+      responses:
+        '200':
+          description: Даты
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { type: string, format: date }
+                  count: { type: integer }
+
+  /nutrition/filters:
+    get:
+      tags: ["🥗 FoodTech: Calendar Menu"]
+      summary: Список фильтров (аллергенов)
+      responses:
+        '200':
+          description: Фильтры
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Tag" }
+
+  /nutrition/addons:
+    get:
+      tags: ["🥗 FoodTech: Addons"]
+      summary: Список добавок
+      parameters:
+        - name: category
+          in: query
+          schema: { type: string, enum: [drink, snack, dessert, supplement] }
+      responses:
+        '200':
+          description: Добавки
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Addon" }
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # 🥗 FOODTECH: CART (Calendar-based)
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  /nutrition/cart:
+    get:
+      tags: ["🥗 FoodTech: Cart"]
+      summary: Получить корзину
+      parameters:
+        - name: x-session-token
+          in: header
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Корзина по дням
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/CalendarCart" }
+
+    delete:
+      tags: ["🥗 FoodTech: Cart"]
+      summary: Очистить корзину
+      parameters:
+        - name: x-session-token
+          in: header
+          required: true
+          schema: { type: string }
+      responses:
+        '204':
+          description: Корзина очищена
+
+  /nutrition/cart/day:
+    post:
+      tags: ["🥗 FoodTech: Cart"]
+      summary: Добавить день в корзину
+      parameters:
+        - name: x-session-token
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [date]
+              properties:
+                date: { type: string, format: date }
+      responses:
+        '200':
+          description: Корзина обновлена
+
+  /nutrition/cart/day/{date}:
+    delete:
+      tags: ["🥗 FoodTech: Cart"]
+      summary: Удалить день из корзины
+      parameters:
+        - name: x-session-token
+          in: header
+          required: true
+          schema: { type: string }
+        - name: date
+          in: path
+          required: true
+          schema: { type: string, format: date }
+      responses:
+        '200':
+          description: День удалён
+
+  /nutrition/cart/meal:
+    post:
+      tags: ["🥗 FoodTech: Cart"]
+      summary: Установить блюдо на день
+      parameters:
+        - name: x-session-token
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [date, mealType, dishId, scheduleId]
+              properties:
+                date: { type: string, format: date }
+                mealType: { type: string, enum: [breakfast, lunch, dinner, snack] }
+                dishId: { type: string, format: uuid }
+                scheduleId: { type: string, format: uuid }
+                quantity: { type: integer, default: 1 }
+      responses:
+        '200':
+          description: Блюдо установлено
+
+    delete:
+      tags: ["🥗 FoodTech: Cart"]
+      summary: Удалить блюдо
+      parameters:
+        - name: x-session-token
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [date, mealType]
+              properties:
+                date: { type: string, format: date }
+                mealType: { type: string, enum: [breakfast, lunch, dinner, snack] }
+      responses:
+        '200':
+          description: Блюдо удалено
+
+  /nutrition/cart/addon:
+    post:
+      tags: ["🥗 FoodTech: Cart"]
+      summary: Добавить добавку на день
+      parameters:
+        - name: x-session-token
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [date, addonId]
+              properties:
+                date: { type: string, format: date }
+                addonId: { type: string, format: uuid }
+                quantity: { type: integer, default: 1 }
+      responses:
+        '200':
+          description: Добавка добавлена
+
+    put:
+      tags: ["🥗 FoodTech: Cart"]
+      summary: Обновить количество добавки
+      parameters:
+        - name: x-session-token
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [date, addonId, quantity]
+              properties:
+                date: { type: string, format: date }
+                addonId: { type: string, format: uuid }
+                quantity: { type: integer }
+      responses:
+        '200':
+          description: Количество обновлено
+
+    delete:
+      tags: ["🥗 FoodTech: Cart"]
+      summary: Удалить добавку
+      parameters:
+        - name: x-session-token
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [date, addonId]
+              properties:
+                date: { type: string, format: date }
+                addonId: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Добавка удалена
+
+  /nutrition/cart/slot:
+    post:
+      tags: ["🥗 FoodTech: Cart"]
+      summary: Установить слот доставки на день
+      parameters:
+        - name: x-session-token
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [date, slotId]
+              properties:
+                date: { type: string, format: date }
+                slotId: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Слот установлен
+
+  /nutrition/cart/preferences:
+    post:
+      tags: ["🥗 FoodTech: Cart"]
+      summary: Установить предпочтения (исключаемые аллергены)
+      parameters:
+        - name: x-session-token
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                excludeAllergens:
+                  type: array
+                  items: { type: string }
+                  example: ["fish", "nuts", "dairy"]
+      responses:
+        '200':
+          description: Предпочтения сохранены
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # 🥗 FOODTECH: CHECKOUT
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  /nutrition/checkout:
+    post:
+      tags: ["🥗 FoodTech: Checkout"]
+      summary: Оформить заказ
+      description: |
+        Создаёт заказ со snapshot всех данных (цены, КБЖУ).
+        Резервирует слоты доставки.
+        Возвращает URL для оплаты (Click/Payme).
+      parameters:
+        - name: x-session-token
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [customerName, customerPhone, deliveryAddress, paymentMethod]
+              properties:
+                customerName: { type: string }
+                customerPhone: { type: string }
+                deliveryAddress: { type: string }
+                deliveryLat: { type: number }
+                deliveryLng: { type: number }
+                deliveryNotes: { type: string }
+                paymentMethod: { type: string, enum: [cash, click, payme] }
+      responses:
+        '201':
+          description: Заказ создан
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      orderId: { type: string, format: uuid }
+                      orderNumber: { type: string, example: "NUT-M1234-AB5C" }
+                      status: { type: string }
+                      totalTiyin: { type: integer }
+                      totalCalories: { type: integer }
+                      paymentUrl: { type: string, nullable: true }
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # 🥗 FOODTECH: CMS DISHES
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  /nutrition/cms/dishes:
+    get:
+      tags: ["🥗 FoodTech: CMS Dishes"]
+      summary: Список блюд
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: mealType
+          in: query
+          schema: { type: string, enum: [breakfast, lunch, dinner, snack] }
+        - name: isActive
+          in: query
+          schema: { type: boolean }
+        - name: search
+          in: query
+          schema: { type: string }
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20 }
+      responses:
+        '200':
+          description: Список
+
+    post:
+      tags: ["🥗 FoodTech: CMS Dishes"]
+      summary: Создать блюдо
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DishInput" }
+      responses:
+        '201':
+          description: Создано
+
+  /nutrition/cms/dishes/{id}:
+    get:
+      tags: ["🥗 FoodTech: CMS Dishes"]
+      summary: Получить блюдо
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Блюдо
+
+    put:
+      tags: ["🥗 FoodTech: CMS Dishes"]
+      summary: Обновить блюдо
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DishInput" }
+      responses:
+        '200':
+          description: Обновлено
+
+    delete:
+      tags: ["🥗 FoodTech: CMS Dishes"]
+      summary: Удалить блюдо
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204':
+          description: Удалено
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # 🥗 FOODTECH: CMS SCHEDULE (Главное для календарного меню)
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  /nutrition/cms/schedule:
+    get:
+      tags: ["🥗 FoodTech: CMS Schedule"]
+      summary: Расписание меню
+      description: Получить расписание блюд по датам
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: startDate
+          in: query
+          required: true
+          schema: { type: string, format: date }
+        - name: endDate
+          in: query
+          schema: { type: string, format: date }
+      responses:
+        '200':
+          description: Расписание сгруппированное по датам
+
+    post:
+      tags: ["🥗 FoodTech: CMS Schedule"]
+      summary: Добавить блюдо в расписание
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [scheduleDate, dishId]
+              properties:
+                scheduleDate: { type: string, format: date }
+                dishId: { type: string, format: uuid }
+                overridePriceTiyin: { type: integer, nullable: true }
+                maxPortions: { type: integer, nullable: true }
+      responses:
+        '201':
+          description: Добавлено
+
+  /nutrition/cms/schedule/bulk:
+    post:
+      tags: ["🥗 FoodTech: CMS Schedule"]
+      summary: Массовое добавление блюд на дату
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [scheduleDate, dishes]
+              properties:
+                scheduleDate: { type: string, format: date }
+                dishes:
+                  type: array
+                  items:
+                    type: object
+                    required: [dishId]
+                    properties:
+                      dishId: { type: string, format: uuid }
+                      overridePriceTiyin: { type: integer }
+                      maxPortions: { type: integer }
+            example:
+              scheduleDate: "2026-03-25"
+              dishes:
+                - { dishId: "uuid-1" }
+                - { dishId: "uuid-2", overridePriceTiyin: 50000 }
+                - { dishId: "uuid-3", maxPortions: 100 }
+      responses:
+        '200':
+          description: Добавлено
+
+  /nutrition/cms/schedule/copy:
+    post:
+      tags: ["🥗 FoodTech: CMS Schedule"]
+      summary: Скопировать расписание на другую дату
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fromDate, toDate]
+              properties:
+                fromDate: { type: string, format: date }
+                toDate: { type: string, format: date }
+            example:
+              fromDate: "2026-03-21"
+              toDate: "2026-03-28"
+      responses:
+        '200':
+          description: Скопировано
+
+  /nutrition/cms/schedule/{id}:
+    delete:
+      tags: ["🥗 FoodTech: CMS Schedule"]
+      summary: Удалить из расписания
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204':
+          description: Удалено
+
+  /nutrition/cms/schedule/{id}/toggle:
+    patch:
+      tags: ["🥗 FoodTech: CMS Schedule"]
+      summary: Переключить доступность
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Переключено
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # 🥗 FOODTECH: CMS ADDONS
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  /nutrition/cms/addons:
+    get:
+      tags: ["🥗 FoodTech: CMS Addons"]
+      summary: Список добавок
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: category
+          in: query
+          schema: { type: string }
+        - name: isActive
+          in: query
+          schema: { type: boolean }
+      responses:
+        '200':
+          description: Список
+
+    post:
+      tags: ["🥗 FoodTech: CMS Addons"]
+      summary: Создать добавку
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, category, priceTiyin]
+              properties:
+                name: { $ref: "#/components/schemas/LocalizedText" }
+                description: { $ref: "#/components/schemas/LocalizedText" }
+                imageUrl: { type: string }
+                category: { type: string, enum: [drink, snack, dessert, supplement, other] }
+                calories: { type: integer }
+                proteins: { type: number }
+                fats: { type: number }
+                carbs: { type: number }
+                priceTiyin: { type: integer }
+                maxPerDay: { type: integer }
+      responses:
+        '201':
+          description: Создано
+
+  /nutrition/cms/addons/{id}:
+    put:
+      tags: ["🥗 FoodTech: CMS Addons"]
+      summary: Обновить добавку
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Обновлено
+
+    delete:
+      tags: ["🥗 FoodTech: CMS Addons"]
+      summary: Удалить добавку
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204':
+          description: Удалено
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # 🥗 FOODTECH: CMS TAGS
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  /nutrition/cms/tags:
+    get:
+      tags: ["🥗 FoodTech: CMS Tags"]
+      summary: Список тегов/аллергенов
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: type
+          in: query
+          schema: { type: string, enum: [allergen, dietary, category] }
+      responses:
+        '200':
+          description: Список
+
+    post:
+      tags: ["🥗 FoodTech: CMS Tags"]
+      summary: Создать тег
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slug, name, type]
+              properties:
+                slug: { type: string, example: "shellfish" }
+                name: { $ref: "#/components/schemas/LocalizedText" }
+                type: { type: string, enum: [allergen, dietary, category] }
+                icon: { type: string }
+                sortOrder: { type: integer }
+      responses:
+        '201':
+          description: Создано
+
+  /nutrition/cms/tags/{id}:
+    put:
+      tags: ["🥗 FoodTech: CMS Tags"]
+      summary: Обновить тег
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Обновлено
+
+    delete:
+      tags: ["🥗 FoodTech: CMS Tags"]
+      summary: Удалить тег
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204':
+          description: Удалено
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # 🥗 FOODTECH: CMS SLOTS
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  /nutrition/cms/slots:
+    get:
+      tags: ["🥗 FoodTech: CMS Slots"]
+      summary: Список слотов доставки
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: startDate
+          in: query
+          schema: { type: string, format: date }
+        - name: endDate
+          in: query
+          schema: { type: string, format: date }
+      responses:
+        '200':
+          description: Список
+
+    post:
+      tags: ["🥗 FoodTech: CMS Slots"]
+      summary: Создать слот
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [deliveryDate, timeStart, timeEnd]
+              properties:
+                deliveryDate: { type: string, format: date }
+                timeStart: { type: string, example: "10:00" }
+                timeEnd: { type: string, example: "14:00" }
+                label: { $ref: "#/components/schemas/LocalizedText" }
+                maxOrders: { type: integer, default: 50 }
+                cutoffHours: { type: integer, default: 24 }
+                minOrderTiyin: { type: integer, default: 0 }
+                deliveryFeeTiyin: { type: integer, default: 0 }
+      responses:
+        '201':
+          description: Создано
+
+  /nutrition/cms/slots/generate:
+    post:
+      tags: ["🥗 FoodTech: CMS Slots"]
+      summary: Генерация слотов на диапазон дат
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [startDate, endDate, timeSlots]
+              properties:
+                startDate: { type: string, format: date }
+                endDate: { type: string, format: date }
+                timeSlots:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      timeStart: { type: string, example: "10:00" }
+                      timeEnd: { type: string, example: "14:00" }
+                      label: { $ref: "#/components/schemas/LocalizedText" }
+                maxOrders: { type: integer, default: 50 }
+                cutoffHours: { type: integer, default: 24 }
+                deliveryFeeTiyin: { type: integer, default: 0 }
+                minOrderTiyin: { type: integer, default: 0 }
+            example:
+              startDate: "2026-03-20"
+              endDate: "2026-03-27"
+              timeSlots:
+                - { timeStart: "10:00", timeEnd: "14:00" }
+                - { timeStart: "14:00", timeEnd: "18:00" }
+                - { timeStart: "18:00", timeEnd: "22:00" }
+              maxOrders: 50
+              cutoffHours: 24
+      responses:
+        '200':
+          description: Слоты созданы
+
+  /nutrition/cms/slots/{id}:
+    put:
+      tags: ["🥗 FoodTech: CMS Slots"]
+      summary: Обновить слот
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Обновлено
+
+    delete:
+      tags: ["🥗 FoodTech: CMS Slots"]
+      summary: Удалить слот
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204':
+          description: Удалено
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # 🍽️ RESTAURANT API
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  /restaurant/tables/available:
+    get:
+      tags: ["🍽️ Restaurant: Tables"]
+      summary: Доступные столы на дату/время
+      parameters:
+        - name: date
+          in: query
+          required: true
+          schema: { type: string, format: date }
+        - name: startTime
+          in: query
+          required: true
+          schema: { type: string, example: "19:00" }
+        - name: partySize
+          in: query
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Доступные столы
+
+  /restaurant/reservations:
+    post:
+      tags: ["🍽️ Restaurant: Reservations"]
+      summary: Создать бронь
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tableId, customerName, customerPhone, reservationDate, startTime, partySize]
+              properties:
+                tableId: { type: string, format: uuid }
+                customerName: { type: string }
+                customerPhone: { type: string }
+                reservationDate: { type: string, format: date }
+                startTime: { type: string }
+                endTime: { type: string }
+                partySize: { type: integer }
+                notes: { type: string }
+      responses:
+        '201':
+          description: Бронь создана
+
+  /restaurant/reservations/{id}:
+    get:
+      tags: ["🍽️ Restaurant: Reservations"]
+      summary: Статус брони
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Бронь
+
+  /restaurant/cms/tables:
+    get:
+      tags: ["🍽️ Restaurant: CMS Tables"]
+      summary: Список столов
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Столы
+
+    post:
+      tags: ["🍽️ Restaurant: CMS Tables"]
+      summary: Создать стол
+      security: [{ bearerAuth: [] }]
+      responses:
+        '201':
+          description: Стол создан
+
+  /restaurant/cms/reservations:
+    get:
+      tags: ["🍽️ Restaurant: CMS Reservations"]
+      summary: Список броней
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: date
+          in: query
+          schema: { type: string, format: date }
+        - name: status
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Брони

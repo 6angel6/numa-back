@@ -1,0 +1,2546 @@
+openapi: 3.0.3
+info:
+  title: Numa E-Commerce API
+  description: |
+    REST API for Numa — multi-store e-commerce platform (nutrition, kids, halal).
+
+    ## Authentication
+    Admin endpoints require a **Bearer JWT token**.
+    Obtain it via `POST /admin/login`, then set header: `Authorization: Bearer <token>`
+
+    ## RBAC (Role-Based Access Control)
+    - **super_admin**: Has all permissions and global access across all stores.
+    - **admin**: Has only explicitly granted permissions and is scoped to a single assigned store.
+
+    ## Store Scoping
+    A regular admin can only access data for their assigned store.
+    `super_admin` has global access (no store restriction).
+
+    ## Cart
+    Cart is **cookie-based** and **store-isolated**. No auth required.
+    Each store has its own cart — cookies are named `cart_session_{store}`
+    (e.g. `cart_session_nutrition`). The store is identified via the URL path.
+
+    As an alternative to cookies, the cart session token can be passed via the
+    `X-Cart-Token` request header.
+
+    | Action | Endpoint |
+    |--------|----------|
+    | View cart | `GET /cart/{store}` |
+    | Add item | `POST /cart/{store}/items` |
+    | Update qty | `PATCH /cart/{store}/items/{productId}` |
+    | Remove item | `DELETE /cart/{store}/items/{productId}` |
+    | Clear cart | `DELETE /cart/{store}` |
+
+    ## Stores
+    Every product and category belongs to one of: `nutrition` | `kids` | `halal`
+
+    ## Response format
+    All responses follow:
+    ```json
+    { "success": true, "statusCode": 200, "message": "...", "data": { ... } }
+    ```
+  version: 1.0.0
+  contact:
+    name: Numa Backend
+
+servers:
+  - url: http://localhost:5000/api/v1
+    description: Local development
+  - url: https://api.numa.uz/api/v1
+    description: Production
+
+tags:
+  - name: Auth
+    description: Admin authentication
+  - name: Admins
+    description: Admin management (protected)
+  - name: Categories
+    description: Product categories
+  - name: Products (Public)
+    description: Public product endpoints
+  - name: Products (CMS)
+    description: Product management (protected)
+  - name: Cart
+    description: Shopping cart — cookie-based, store-isolated, no auth required
+  - name: Orders (Public)
+    description: Guest checkout
+  - name: Orders (CMS)
+    description: Order management (protected)
+  - name: Payments
+    description: Payment provider integrations (Click + Payme)
+  - name: Health
+    description: Service health check
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token from POST /admin/login
+    paymeBasicAuth:
+      type: http
+      scheme: basic
+      description: Payme Basic Auth (username = cashier ID, password = key)
+
+  schemas:
+    # ── Primitives ──────────────────────────────────────────────────────────
+    LocalizedText:
+      type: object
+      required: [uz, ru, en]
+      properties:
+        uz: { type: string, example: "Mahsulot" }
+        ru: { type: string, example: "Продукт" }
+        en: { type: string, example: "Product" }
+
+    StoreSlug:
+      type: string
+      enum: [nutrition, kids, halal]
+
+    # ── Wrappers ─────────────────────────────────────────────────────────────
+    SuccessResponse:
+      type: object
+      properties:
+        success:    { type: boolean, example: true }
+        statusCode: { type: integer, example: 200 }
+        message:    { type: string }
+        data:       {}
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:    { type: boolean, example: false }
+        statusCode: { type: integer }
+        code:       { type: string }
+        message:    { type: string }
+        requestId:  { type: string, format: uuid }
+
+    # ── Admin ────────────────────────────────────────────────────────────────
+    Admin:
+      type: object
+      properties:
+        id:          { type: string, format: uuid }
+        name:        { type: string, example: "Test Admin" }
+        email:       { type: string, format: email, example: "admin@numa.uz" }
+        role:        { type: string, enum: [super_admin, admin] }
+        isActive:    { type: boolean }
+        lastLoginAt: { type: string, format: date-time, nullable: true }
+        createdAt:   { type: string, format: date-time }
+        store:
+          type: string
+          nullable: true
+          enum: [nutrition, kids, halal]
+          description: Assigned store (null for super_admin — global access)
+        permissions:
+          type: array
+          items:
+            type: string
+          description: List of granted permission keys
+
+    AdminPermissionsList:
+      type: object
+      properties:
+        permissions:
+          type: array
+          items:
+            type: string
+          example: [products:read, products:write, products:delete, categories:read, categories:write, categories:delete, orders:read, orders:write, payments:read]
+
+    # ── Category ─────────────────────────────────────────────────────────────
+    Category:
+      type: object
+      properties:
+        id:            { type: string, format: uuid }
+        name:          { $ref: '#/components/schemas/LocalizedText' }
+        slug:          { type: string, example: "vitamins" }
+        store:         { $ref: '#/components/schemas/StoreSlug' }
+        parentId:      { type: string, format: uuid, nullable: true }
+        imageUrl:      { type: string, nullable: true }
+        sortOrder:     { type: integer, example: 0 }
+        isActive:      { type: boolean }
+        subcategories:
+          type: array
+          items: { $ref: '#/components/schemas/Category' }
+
+    # ── Product ──────────────────────────────────────────────────────────────
+    ProductMedia:
+      type: object
+      properties:
+        id:        { type: string, format: uuid }
+        url:       { type: string }
+        type:      { type: string, enum: [image, video] }
+        isMain:    { type: boolean }
+        sortOrder: { type: integer }
+
+    Product:
+      type: object
+      properties:
+        id:            { type: string, format: uuid }
+        name:          { $ref: '#/components/schemas/LocalizedText' }
+        description:
+          allOf: [{ $ref: '#/components/schemas/LocalizedText' }]
+          nullable: true
+        slug:          { type: string }
+        sku:           { type: string, example: "NUM-NUT-001" }
+        price:         { type: number, example: 85000 }
+        discountPrice: { type: number, nullable: true, example: 72000 }
+        stock:         { type: integer, example: 50 }
+        unit:          { type: string, example: "шт" }
+        store:         { $ref: '#/components/schemas/StoreSlug' }
+        categoryId:    { type: string, format: uuid }
+        status:        { type: string, enum: [active, draft, archived] }
+        isFeatured:    { type: boolean }
+        media:
+          type: array
+          items: { $ref: '#/components/schemas/ProductMedia' }
+        category:      { $ref: '#/components/schemas/Category' }
+
+    # ── Cart ─────────────────────────────────────────────────────────────────
+    CartItem:
+      type: object
+      properties:
+        id:          { type: string, format: uuid }
+        productId:   { type: string, format: uuid }
+        quantity:    { type: integer }
+        isAvailable:
+          type: boolean
+          description: "false if product is deleted, archived, or out of stock"
+        product:     { $ref: '#/components/schemas/Product' }
+
+    Cart:
+      type: object
+      properties:
+        id:           { type: string, format: uuid }
+        sessionToken: { type: string }
+        store:        { $ref: '#/components/schemas/StoreSlug' }
+        expiresAt:    { type: string, format: date-time }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/CartItem' }
+
+    # ── Order ────────────────────────────────────────────────────────────────
+    OrderItem:
+      type: object
+      properties:
+        id:          { type: string, format: uuid }
+        productId:   { type: string, format: uuid }
+        productName: { $ref: '#/components/schemas/LocalizedText' }
+        productSku:  { type: string }
+        unitPrice:   { type: number }
+        quantity:    { type: integer }
+        subtotal:    { type: number }
+
+    Order:
+      type: object
+      properties:
+        id:              { type: string, format: uuid }
+        store:           { $ref: '#/components/schemas/StoreSlug' }
+        customerName:    { type: string }
+        customerSurname: { type: string }
+        customerPhone:   { type: string, example: "+998901234567" }
+        customerAddress: { type: string }
+        notes:           { type: string, nullable: true }
+        status:          { type: string, enum: [new, processing, completed, cancelled] }
+        paymentStatus:   { type: string, enum: [unpaid, pending, paid, failed, refunded], example: unpaid }
+        paymentMethod:   { type: string, enum: [cash, click, payme], nullable: true }
+        totalAmount:     { type: number, example: 157000 }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OrderItem' }
+        payments:
+          type: array
+          description: Payment attempts for this order (latest = most recent). Included in detail view only.
+          items: { $ref: '#/components/schemas/PaymentTransaction' }
+        createdAt: { type: string, format: date-time }
+
+    # ── Pagination wrapper ───────────────────────────────────────────────────
+    PaginationMeta:
+      type: object
+      properties:
+        total: { type: integer }
+        page:  { type: integer }
+        limit: { type: integer }
+        pages: { type: integer }
+
+    # ── Blog ─────────────────────────────────────────────────────────────────
+    MultilingualText:
+      type: object
+      properties:
+        uz: { type: string }
+        ru: { type: string }
+        en: { type: string }
+      required: [uz, ru, en]
+
+    BlogPost:
+      type: object
+      properties:
+        id:              { type: string, format: uuid }
+        title:           { $ref: '#/components/schemas/MultilingualText' }
+        excerpt:         { nullable: true, allOf: [{ $ref: '#/components/schemas/MultilingualText' }] }
+        slug:            { type: string, example: protein-and-muscle }
+        coverImageUrl:   { type: string, format: uri, nullable: true }
+        store:           { type: string, enum: [nutrition, kids, halal], nullable: true }
+        distributeTo:    { type: array, items: { type: string } }
+        status:          { type: string, enum: [draft, published, archived] }
+        publishedAt:     { type: string, format: date-time, nullable: true }
+        tags:            { type: array, items: { type: string } }
+        readTimeMinutes: { type: integer, nullable: true }
+        viewCount:       { type: integer }
+        createdAt:       { type: string, format: date-time }
+
+    BlogPostDetail:
+      allOf:
+        - { $ref: '#/components/schemas/BlogPost' }
+        - type: object
+          properties:
+            content:        { $ref: '#/components/schemas/MultilingualText' }
+            seoTitle:       { nullable: true, allOf: [{ $ref: '#/components/schemas/MultilingualText' }] }
+            seoDescription: { nullable: true, allOf: [{ $ref: '#/components/schemas/MultilingualText' }] }
+            seoKeywords:    { type: array, items: { type: string } }
+            products:
+              type: array
+              items: { $ref: '#/components/schemas/BlogProductCard' }
+
+    BlogProductCard:
+      type: object
+      properties:
+        blogPostId: { type: string, format: uuid }
+        productId:  { type: string, format: uuid }
+        note:       { type: string, nullable: true, example: Helps boost recovery }
+        sortOrder:  { type: integer }
+        product:
+          type: object
+          properties:
+            id:            { type: string, format: uuid }
+            name:          { $ref: '#/components/schemas/MultilingualText' }
+            price:         { type: number, example: 45000 }
+            discountPrice: { type: number, nullable: true }
+            store:         { type: string }
+
+    ClickResponse:
+      type: object
+      properties:
+        click_trans_id:      { type: integer }
+        merchant_trans_id:   { type: string }
+        merchant_confirm_id: { type: string, nullable: true }
+        error:               { type: integer }
+        error_note:          { type: string }
+
+    PaymentTransaction:
+      type: object
+      properties:
+        id:                    { type: string, format: uuid }
+        orderId:               { type: string, format: uuid }
+        store:                 { type: string, enum: [nutrition, kids, halal] }
+        provider:              { type: string, enum: [click, payme] }
+        amountTiyin:           { type: integer }
+        status:                { type: string, enum: [pending, paid, failed, cancelled, expired, refunded] }
+        providerTransactionId: { type: string, nullable: true }
+        paidAt:                { type: string, format: date-time, nullable: true }
+        expiresAt:             { type: string, format: date-time, nullable: true }
+        createdAt:             { type: string, format: date-time }
+        order:
+          type: object
+          nullable: true
+          properties:
+            id:            { type: string, format: uuid }
+            customerName:  { type: string }
+            customerPhone: { type: string }
+            totalAmount:   { type: number }
+            status:        { type: string }
+            store:         { type: string }
+
+  # ── Reusable responses ─────────────────────────────────────────────────────
+  responses:
+    Unauthorized:
+      description: Missing or invalid token
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          example: { success: false, statusCode: 401, code: UNAUTHORIZED, message: "Authentication required" }
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          example: { success: false, statusCode: 403, code: FORBIDDEN, message: "Access denied" }
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    BadRequest:
+      description: Bad request / validation error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Conflict:
+      description: Resource already exists or state conflict
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          example: { success: false, statusCode: 409, code: CONFLICT, message: "Already exists" }
+    ValidationError:
+      description: Request validation failed
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          example: { success: false, statusCode: 422, code: VALIDATION_ERROR, message: "Validation failed" }
+
+# ════════════════════════════════════════════════════════════════════════════
+# PATHS
+# ════════════════════════════════════════════════════════════════════════════
+paths:
+
+  # ── Health ──────────────────────────────────────────────────────────────────
+  /health:
+    get:
+      tags: [Health]
+      summary: Service health check
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              example:
+                status: healthy
+                uptime: 3600
+                dependencies:
+                  database: { status: connected }
+                  redis:    { status: connected }
+
+  # ── Auth ────────────────────────────────────────────────────────────────────
+  /admin/login:
+    post:
+      tags: [Auth]
+      summary: Admin login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:    { type: string, format: email, example: "admin@numa.uz" }
+                password: { type: string, example: "Admin123!" }
+      responses:
+        '200':
+          description: Login successful — returns JWT token
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          token: { type: string }
+                          admin: { $ref: '#/components/schemas/Admin' }
+              example:
+                success: true
+                statusCode: 200
+                message: "Login successful"
+                data:
+                  token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                  admin: { id: "uuid", name: "Test Admin", email: "admin@numa.uz", role: super_admin, isActive: true }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  # ── Admin management ─────────────────────────────────────────────────────────
+  /admin:
+    get:
+      tags: [Admins]
+      summary: List all admins (super_admin only)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: store
+          in: query
+          required: false
+          schema: { $ref: '#/components/schemas/StoreSlug' }
+          description: Filter by store
+      responses:
+        '200':
+          description: List of admins
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Admin' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+    post:
+      tags: [Admins]
+      summary: Create new admin (super_admin only)
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password]
+              properties:
+                name:     { type: string, minLength: 2, maxLength: 100, example: "New Admin" }
+                email:    { type: string, format: email, example: "new@numa.uz" }
+                password: { type: string, minLength: 8, example: "SecurePass1!" }
+                storeSlug:
+                  allOf: [{ $ref: '#/components/schemas/StoreSlug' }]
+                  nullable: true
+                  description: Assigned store for the new admin (null = global access)
+                permissions:
+                  type: array
+                  items: { type: string }
+                  description: List of permission keys to grant
+                  example: [products:read, products:write, orders:read]
+      responses:
+        '201':
+          description: Admin created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Admin' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: Email already in use
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /admin/me:
+    get:
+      tags: [Admins]
+      summary: Get own profile (any authenticated admin)
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Admin profile
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Admin' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+    patch:
+      tags: [Admins]
+      summary: Update own name/email
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:  { type: string, minLength: 2, maxLength: 100, example: "Updated Name" }
+                email: { type: string, format: email, example: "updated@numa.uz" }
+      responses:
+        '200':
+          description: Profile updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Admin' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: Email already in use
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /admin/me/password:
+    patch:
+      tags: [Admins]
+      summary: Change own password
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currentPassword, newPassword]
+              properties:
+                currentPassword: { type: string, example: "OldPass123!" }
+                newPassword:     { type: string, minLength: 8, example: "NewPass456!" }
+      responses:
+        '200': { description: Password changed }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /admin/permissions:
+    get:
+      tags: [Admins]
+      summary: List all available permission keys (super_admin only)
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Available permissions
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/AdminPermissionsList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /admin/{id}:
+    get:
+      tags: [Admins]
+      summary: Get admin by ID (super_admin only)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Admin detail
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Admin' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+    patch:
+      tags: [Admins]
+      summary: Update admin name/email/isActive (super_admin only)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:     { type: string, minLength: 2, maxLength: 100 }
+                email:    { type: string, format: email }
+                isActive: { type: boolean }
+      responses:
+        '200':
+          description: Admin updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Admin' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Email already in use
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+    delete:
+      tags: [Admins]
+      summary: Delete admin (super_admin only)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Admin deleted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /admin/{id}/permissions:
+    patch:
+      tags: [Admins]
+      summary: Update admin store + permissions (super_admin only)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                storeSlug:
+                  allOf: [{ $ref: '#/components/schemas/StoreSlug' }]
+                  nullable: true
+                  description: Assigned store (null = global access)
+                permissions:
+                  type: array
+                  items: { type: string }
+                  description: Full replacement list of permission keys
+                  example: [products:read, products:write, orders:read, orders:write]
+      responses:
+        '200':
+          description: Permissions updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Admin' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /admin/{id}/password:
+    patch:
+      tags: [Admins]
+      summary: Change any admin's password (super_admin only)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [newPassword]
+              properties:
+                newPassword: { type: string, minLength: 8, example: "NewPass456!" }
+      responses:
+        '200': { description: Password changed }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /admin/{id}/activate:
+    post:
+      tags: [Admins]
+      summary: Activate admin (super_admin only)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Admin activated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Admin' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /admin/{id}/deactivate:
+    post:
+      tags: [Admins]
+      summary: Deactivate admin (super_admin only)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Admin deactivated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Admin' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ── Categories (Public) ──────────────────────────────────────────────────────
+  /categories/store/{store}:
+    get:
+      tags: [Categories]
+      summary: List active categories for a store (public)
+      parameters:
+        - name: store
+          in: path
+          required: true
+          schema: { $ref: '#/components/schemas/StoreSlug' }
+          example: nutrition
+      responses:
+        '200':
+          description: Category tree
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Category' }
+
+  # ── Categories (CMS) ─────────────────────────────────────────────────────────
+  /categories/{store}:
+    get:
+      tags: [Categories]
+      summary: CMS — list categories by store
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: store
+          in: path
+          required: true
+          schema: { $ref: '#/components/schemas/StoreSlug' }
+      responses:
+        '200':
+          description: Categories list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Category' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /categories/id/{id}:
+    get:
+      tags: [Categories]
+      summary: CMS — get category by ID
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Category detail
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Category' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /categories:
+    post:
+      tags: [Categories]
+      summary: CMS — create category
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, slug, store]
+              properties:
+                name:      { $ref: '#/components/schemas/LocalizedText' }
+                slug:      { type: string, pattern: '^[a-z0-9-]+$', example: "vitamins" }
+                store:     { $ref: '#/components/schemas/StoreSlug' }
+                parentId:  { type: string, format: uuid, nullable: true }
+                imageUrl:  { type: string, nullable: true }
+                sortOrder: { type: integer, default: 0 }
+                isActive:  { type: boolean, default: true }
+            example:
+              name: { uz: "Vitaminlar", ru: "Витамины", en: "Vitamins" }
+              slug: "vitamins"
+              store: "nutrition"
+              sortOrder: 1
+      responses:
+        '201':
+          description: Category created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Category' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: Slug already exists in this store
+
+  /categories/{id}:
+    patch:
+      tags: [Categories]
+      summary: CMS — update category
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:      { $ref: '#/components/schemas/LocalizedText' }
+                slug:      { type: string, pattern: '^[a-z0-9-]+$' }
+                store:     { $ref: '#/components/schemas/StoreSlug' }
+                parentId:  { type: string, format: uuid, nullable: true }
+                imageUrl:  { type: string, nullable: true }
+                sortOrder: { type: integer }
+                isActive:  { type: boolean }
+      responses:
+        '200':
+          description: Category updated
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+    delete:
+      tags: [Categories]
+      summary: CMS — delete category
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Category deleted
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ── Products (Public) ────────────────────────────────────────────────────────
+  /products:
+    get:
+      tags: [Products (Public)]
+      summary: List active products
+      parameters:
+        - name: store
+          in: query
+          schema: { $ref: '#/components/schemas/StoreSlug' }
+          example: nutrition
+        - name: categoryId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: search
+          in: query
+          schema: { type: string }
+          example: "protein"
+        - name: featured
+          in: query
+          schema: { type: boolean }
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+        - name: sortBy
+          in: query
+          schema: { type: string, enum: [createdAt, price, name], default: createdAt }
+        - name: sortDir
+          in: query
+          schema: { type: string, enum: [asc, desc], default: desc }
+      responses:
+        '200':
+          description: Paginated product list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data:
+                        allOf:
+                          - { $ref: '#/components/schemas/PaginationMeta' }
+                          - type: object
+                            properties:
+                              products:
+                                type: array
+                                items: { $ref: '#/components/schemas/Product' }
+
+  /products/featured/{store}:
+    get:
+      tags: [Products (Public)]
+      summary: Get featured products for a store
+      parameters:
+        - name: store
+          in: path
+          required: true
+          schema: { $ref: '#/components/schemas/StoreSlug' }
+      responses:
+        '200':
+          description: Featured products array
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Product' }
+
+  /products/{store}/{slug}:
+    get:
+      tags: [Products (Public)]
+      summary: Get product detail by slug
+      parameters:
+        - name: store
+          in: path
+          required: true
+          schema: { $ref: '#/components/schemas/StoreSlug' }
+          example: nutrition
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+          example: omega-3-premium
+      responses:
+        '200':
+          description: Product detail with all media
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Product' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ── Products (CMS) ───────────────────────────────────────────────────────────
+  /products/cms:
+    get:
+      tags: [Products (CMS)]
+      summary: CMS — list all products (any status)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: store
+          in: query
+          schema: { $ref: '#/components/schemas/StoreSlug' }
+        - name: categoryId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          schema: { type: string, enum: [active, draft, archived] }
+        - name: search
+          in: query
+          schema: { type: string }
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20 }
+        - name: sortBy
+          in: query
+          schema: { type: string, enum: [createdAt, price, name] }
+        - name: sortDir
+          in: query
+          schema: { type: string, enum: [asc, desc] }
+      responses:
+        '200':
+          description: Paginated product list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data:
+                        allOf:
+                          - { $ref: '#/components/schemas/PaginationMeta' }
+                          - type: object
+                            properties:
+                              products:
+                                type: array
+                                items: { $ref: '#/components/schemas/Product' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+    post:
+      tags: [Products (CMS)]
+      summary: CMS — create product
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, slug, sku, price, store, categoryId]
+              properties:
+                name:          { $ref: '#/components/schemas/LocalizedText' }
+                description:
+                  allOf: [{ $ref: '#/components/schemas/LocalizedText' }]
+                  nullable: true
+                slug:          { type: string, pattern: '^[a-z0-9-]+$', example: "omega-3-premium" }
+                sku:           { type: string, example: "NUM-NUT-001" }
+                price:         { type: number, example: 85000 }
+                discountPrice: { type: number, nullable: true, example: 72000 }
+                stock:         { type: integer, default: 0, example: 100 }
+                unit:          { type: string, default: "шт", example: "шт" }
+                store:         { $ref: '#/components/schemas/StoreSlug' }
+                categoryId:    { type: string, format: uuid }
+                status:        { type: string, enum: [active, draft, archived], default: draft }
+                isFeatured:    { type: boolean, default: false }
+            example:
+              name: { uz: "Omega-3 Premium", ru: "Омега-3 Премиум", en: "Omega-3 Premium" }
+              description: { uz: "Tavsif", ru: "Описание", en: "Description" }
+              slug: "omega-3-premium"
+              sku: "NUM-NUT-001"
+              price: 85000
+              discountPrice: 72000
+              stock: 100
+              unit: "капсул"
+              store: "nutrition"
+              categoryId: "uuid-here"
+              status: "active"
+              isFeatured: true
+      responses:
+        '201':
+          description: Product created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Product' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /products/cms/{id}:
+    get:
+      tags: [Products (CMS)]
+      summary: CMS — get product by ID
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Product detail
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Product' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+    patch:
+      tags: [Products (CMS)]
+      summary: CMS — update product fields
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:          { $ref: '#/components/schemas/LocalizedText' }
+                description:
+                  allOf: [{ $ref: '#/components/schemas/LocalizedText' }]
+                  nullable: true
+                slug:          { type: string, pattern: '^[a-z0-9-]+$' }
+                sku:           { type: string }
+                price:         { type: number }
+                discountPrice: { type: number, nullable: true }
+                stock:         { type: integer }
+                unit:          { type: string }
+                categoryId:    { type: string, format: uuid }
+                isFeatured:    { type: boolean }
+            example:
+              price: 90000
+              discountPrice: 75000
+              stock: 85
+      responses:
+        '200': { description: Product updated }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+    delete:
+      tags: [Products (CMS)]
+      summary: CMS — soft-delete product
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Product deleted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /products/cms/{id}/status:
+    patch:
+      tags: [Products (CMS)]
+      summary: CMS — change product status
+      description: Use this to publish (`active`) or archive a product.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [active, draft, archived] }
+            example: { status: "active" }
+      responses:
+        '200': { description: Status updated }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /products/cms/{id}/restore:
+    post:
+      tags: [Products (CMS)]
+      summary: CMS — restore soft-deleted product (products:write)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Product restored
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Product' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /products/cms/{id}/media:
+    post:
+      tags: [Products (CMS)]
+      summary: CMS — add media to product
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url:       { type: string, format: uri, example: "https://cdn.numa.uz/products/img.webp" }
+                type:      { type: string, enum: [image, video], default: image }
+                isMain:    { type: boolean, default: false }
+                sortOrder: { type: integer, default: 0 }
+      responses:
+        '201':
+          description: Media added
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ProductMedia' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /products/cms/{id}/media/{mediaId}:
+    patch:
+      tags: [Products (CMS)]
+      summary: CMS — update media item (products:write)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: mediaId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                url:       { type: string, format: uri, example: "https://cdn.numa.uz/products/img-updated.webp" }
+                type:      { type: string, enum: [image, video] }
+                isMain:    { type: boolean }
+                sortOrder: { type: integer }
+      responses:
+        '200':
+          description: Media updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ProductMedia' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+    delete:
+      tags: [Products (CMS)]
+      summary: CMS — delete product media
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: mediaId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Media deleted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /products/cms/{id}/media/{mediaId}/main:
+    patch:
+      tags: [Products (CMS)]
+      summary: CMS — set media as main image
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: mediaId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Main media updated }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ── Cart ─────────────────────────────────────────────────────────────────────
+  /cart/{store}:
+    get:
+      tags: [Cart]
+      summary: Get current cart for a store
+      description: |
+        Returns cart for the current session and store (via `cart_session_{store}` cookie
+        or `X-Cart-Token` header).
+        Returns `{ items: [] }` if no cart exists yet.
+        Each item includes `isAvailable` — check before checkout.
+      parameters:
+        - name: store
+          in: path
+          required: true
+          schema: { $ref: '#/components/schemas/StoreSlug' }
+          example: nutrition
+      responses:
+        '200':
+          description: Cart contents
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Cart' }
+              example:
+                success: true
+                statusCode: 200
+                data:
+                  id: "uuid"
+                  store: "nutrition"
+                  items:
+                    - productId: "uuid"
+                      quantity: 2
+                      isAvailable: true
+                      product: { name: { ru: "Омега-3" }, price: 85000, stock: 50 }
+        '400': { description: Invalid store slug }
+
+    delete:
+      tags: [Cart]
+      summary: Clear entire cart for a store
+      parameters:
+        - name: store
+          in: path
+          required: true
+          schema: { $ref: '#/components/schemas/StoreSlug' }
+          example: nutrition
+      responses:
+        '200': { description: Cart cleared }
+        '400': { description: Invalid store slug }
+
+  /cart/{store}/items:
+    post:
+      tags: [Cart]
+      summary: Add item to cart
+      description: |
+        Creates cart session automatically (sets `cart_session_{store}` cookie).
+        If product already in cart — quantity is **replaced** (not added).
+      parameters:
+        - name: store
+          in: path
+          required: true
+          schema: { $ref: '#/components/schemas/StoreSlug' }
+          example: nutrition
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [productId, quantity]
+              properties:
+                productId: { type: string, format: uuid }
+                quantity:  { type: integer, minimum: 1, maximum: 99, example: 2 }
+            example: { productId: "product-uuid-here", quantity: 2 }
+      responses:
+        '200':
+          description: Item added, returns updated cart
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Cart' }
+        '400': { description: Product not available or out of stock }
+        '404': { description: Product not found }
+
+  /cart/{store}/items/{productId}:
+    patch:
+      tags: [Cart]
+      summary: Update item quantity
+      parameters:
+        - name: store
+          in: path
+          required: true
+          schema: { $ref: '#/components/schemas/StoreSlug' }
+          example: nutrition
+        - name: productId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quantity]
+              properties:
+                quantity: { type: integer, minimum: 1, maximum: 99 }
+            example: { quantity: 3 }
+      responses:
+        '200':
+          description: Cart updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Cart' }
+        '400': { description: Insufficient stock }
+        '404': { description: Item not in cart }
+
+    delete:
+      tags: [Cart]
+      summary: Remove item from cart
+      parameters:
+        - name: store
+          in: path
+          required: true
+          schema: { $ref: '#/components/schemas/StoreSlug' }
+          example: nutrition
+        - name: productId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Item removed, returns updated cart
+
+  # ── Orders ───────────────────────────────────────────────────────────────────
+  /orders/{store}/checkout:
+    post:
+      tags: [Orders (Public)]
+      summary: Place order from cart
+      description: |
+        Reads cart from `cart_session_{store}` cookie (or `X-Cart-Token` header). On success:
+        - Stock is decremented atomically (with deadlock retry)
+        - Cart is cleared
+        - If `paymentMethod` is `click` or `payme`, a Payment record is created and a
+          `paymentUrl` redirect link is returned (click also sends an SMS invoice to the customer's phone)
+        - If `paymentMethod` is `cash`, `paymentUrl` is `null`
+
+        **Phone format:** `+998XXXXXXXXX` (9 digits after +998)
+      parameters:
+        - name: store
+          in: path
+          required: true
+          schema: { $ref: '#/components/schemas/StoreSlug' }
+          example: nutrition
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [customerName, customerSurname, customerPhone, customerAddress]
+              properties:
+                customerName:    { type: string, minLength: 2, maxLength: 100, example: "Алишер" }
+                customerSurname: { type: string, minLength: 2, maxLength: 100, example: "Каримов" }
+                customerPhone:   { type: string, pattern: '^\+998[0-9]{9}$', example: "+998901234567" }
+                customerAddress: { type: string, minLength: 5, example: "Ташкент, ул. Навои 15, кв. 3" }
+                notes:           { type: string, maxLength: 1000, nullable: true }
+                paymentMethod:
+                  type: string
+                  enum: [cash, click, payme]
+                  default: cash
+                  description: |
+                    Payment method:
+                    - `cash` — no payment record, paymentUrl is null
+                    - `click` — Click redirect URL + SMS invoice sent to customerPhone
+                    - `payme` — Payme redirect URL
+            example:
+              customerName: "Алишер"
+              customerSurname: "Каримов"
+              customerPhone: "+998901234567"
+              customerAddress: "Ташкент, ул. Навои 15, кв. 3"
+              notes: "Позвонить за 30 минут"
+              paymentMethod: "click"
+      responses:
+        '201':
+          description: Order created successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          order: { $ref: '#/components/schemas/Order' }
+                          paymentUrl:
+                            type: string
+                            format: uri
+                            nullable: true
+                            description: |
+                              Redirect URL to the payment provider checkout page.
+                              `null` for cash orders.
+                            example: "https://my.click.uz/services/pay?service_id=12345&merchant_id=67890&amount=185000&transaction_param=..."
+        '400':
+          description: Cart empty, product unavailable, or insufficient stock
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              example:
+                success: false
+                statusCode: 400
+                message: 'Insufficient stock for "Омега-3 Премиум". Available: 2'
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /orders/cms:
+    get:
+      tags: [Orders (CMS)]
+      summary: CMS — list orders
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: store
+          in: query
+          schema: { $ref: '#/components/schemas/StoreSlug' }
+          description: Filter by store (omit to see all stores)
+          example: nutrition
+        - name: status
+          in: query
+          schema: { type: string, enum: [new, processing, completed, cancelled] }
+          example: new
+        - name: paymentStatus
+          in: query
+          schema: { type: string, enum: [unpaid, pending, paid, failed, refunded] }
+          description: Filter by payment status (e.g. paid to see only confirmed payments)
+          example: paid
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+      responses:
+        '200':
+          description: Paginated orders list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data:
+                        allOf:
+                          - { $ref: '#/components/schemas/PaginationMeta' }
+                          - type: object
+                            properties:
+                              orders:
+                                type: array
+                                items: { $ref: '#/components/schemas/Order' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /orders/cms/{id}:
+    get:
+      tags: [Orders (CMS)]
+      summary: CMS — get order by ID
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Full order with items
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Order' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+    patch:
+      tags: [Orders (CMS)]
+      summary: CMS — update order status
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [new, processing, completed, cancelled] }
+            example: { status: "processing" }
+      responses:
+        '200':
+          description: Order status updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Order' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /orders/cms/{id}/payment-status:
+    patch:
+      tags: [Orders (CMS)]
+      summary: CMS — update order payment status (orders:write)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [paymentStatus]
+              properties:
+                paymentStatus: { type: string, enum: [unpaid, pending, paid, failed, refunded] }
+            example: { paymentStatus: "paid" }
+      responses:
+        '200':
+          description: Payment status updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Order' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ── Payments ──────────────────────────────────────────────────────────────────
+  /payment/payme:
+    post:
+      tags: [Payments]
+      summary: Payme JSON-RPC callback endpoint
+      description: |
+        JSON-RPC 2.0 endpoint for Payme payment system callbacks.
+        Secured by Payme IP whitelist and HTTP Basic Auth.
+        **Not** protected by Bearer JWT.
+      security: [{ paymeBasicAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, method, params]
+              properties:
+                id:
+                  type: integer
+                  example: 123
+                method:
+                  type: string
+                  example: "CheckPerformTransaction"
+                  enum:
+                    - CheckPerformTransaction
+                    - CreateTransaction
+                    - PerformTransaction
+                    - CancelTransaction
+                    - CheckTransaction
+                    - GetStatement
+                params:
+                  type: object
+                  additionalProperties: true
+            example:
+              id: 123
+              method: "CheckPerformTransaction"
+              params:
+                amount: 5000000
+                account:
+                  order_id: "uuid-here"
+      responses:
+        '200':
+          description: JSON-RPC response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:     { type: integer }
+                  result: {}
+                  error:
+                    type: object
+                    nullable: true
+                    properties:
+                      code:    { type: integer }
+                      message: { type: object }
+                      data:    { type: string }
+
+  /payment/payme/checkout-url:
+    get:
+      tags: [Payments]
+      summary: Generate Payme checkout URL for an order
+      description: |
+        Returns a Payme checkout URL for the given order.
+        Requires Bearer JWT. Admin must have `payments:read` permission
+        (or be `super_admin`).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: orderId
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+          description: Order ID to generate checkout URL for
+      responses:
+        '200':
+          description: Checkout URL generated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          checkoutUrl:
+                            type: string
+                            format: uri
+                            example: "https://checkout.paycom.uz/..."
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  # ── Blog (Public) ──────────────────────────────────────────────────────────
+
+  /blog/{store}:
+    get:
+      tags: [Blog - Public]
+      summary: List published posts for a store feed
+      description: |
+        Returns all published posts for the given store.
+        store = nutrition | kids | halal | global (main site).
+        Published posts cross-posted via distributeTo also appear here.
+      parameters:
+        - name: store
+          in: path
+          required: true
+          schema: { type: string, enum: [nutrition, kids, halal, global] }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+      responses:
+        '200':
+          description: List of published blog posts
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/BlogPost' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /blog/{store}/{slug}:
+    get:
+      tags: [Blog - Public]
+      summary: Get a single published post with attached product cards
+      description: |
+        Returns the full post detail including rich content and attached products.
+        Increments view count on each call.
+      parameters:
+        - name: store
+          in: path
+          required: true
+          schema: { type: string, enum: [nutrition, kids, halal, global] }
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Post detail with products
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/BlogPostDetail' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ── Blog (CMS) ─────────────────────────────────────────────────────────────
+
+  /blog/cms:
+    get:
+      tags: [Blog - CMS]
+      summary: List blog posts (CMS)
+      description: |
+        Admin sees only their assigned store posts.
+        Super_admin sees all posts.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: store
+          in: query
+          schema: { type: string, enum: [nutrition, kids, halal] }
+          description: Filter by store (super_admin only)
+        - name: status
+          in: query
+          schema: { type: string, enum: [draft, published, archived] }
+        - name: tag
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+      responses:
+        '200':
+          description: CMS post list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/BlogPost' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+    post:
+      tags: [Blog - CMS]
+      summary: Create a blog post
+      description: |
+        Regular admin post is auto-scoped to their assigned store.
+        Super_admin may specify any store (or null for global).
+        Requires blog:write permission.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, content]
+              properties:
+                title:           { $ref: '#/components/schemas/MultilingualText' }
+                content:         { $ref: '#/components/schemas/MultilingualText' }
+                excerpt:         { $ref: '#/components/schemas/MultilingualText' }
+                slug:            { type: string, example: protein-and-muscle }
+                coverImageUrl:   { type: string, format: uri, nullable: true }
+                store:           { type: string, enum: [nutrition, kids, halal], nullable: true }
+                distributeTo:    { type: array, items: { type: string, enum: [nutrition, kids, halal] } }
+                seoTitle:        { $ref: '#/components/schemas/MultilingualText' }
+                seoDescription:  { $ref: '#/components/schemas/MultilingualText' }
+                seoKeywords:     { type: array, items: { type: string } }
+                tags:            { type: array, items: { type: string } }
+                readTimeMinutes: { type: integer, example: 5 }
+      responses:
+        '201':
+          description: Post created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/BlogPost' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /blog/cms/{id}:
+    get:
+      tags: [Blog - CMS]
+      summary: Get one CMS post by ID (includes drafts and archived)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Post detail
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/BlogPostDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+    patch:
+      tags: [Blog - CMS]
+      summary: Update a blog post
+      description: Requires blog:write permission. Admin can only update their store posts.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:           { $ref: '#/components/schemas/MultilingualText' }
+                content:         { $ref: '#/components/schemas/MultilingualText' }
+                excerpt:         { $ref: '#/components/schemas/MultilingualText' }
+                slug:            { type: string }
+                coverImageUrl:   { type: string, format: uri, nullable: true }
+                store:           { type: string, enum: [nutrition, kids, halal], nullable: true }
+                distributeTo:    { type: array, items: { type: string } }
+                seoTitle:        { $ref: '#/components/schemas/MultilingualText' }
+                seoDescription:  { $ref: '#/components/schemas/MultilingualText' }
+                seoKeywords:     { type: array, items: { type: string } }
+                tags:            { type: array, items: { type: string } }
+                readTimeMinutes: { type: integer }
+      responses:
+        '200':
+          description: Post updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/BlogPost' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+    delete:
+      tags: [Blog - CMS]
+      summary: Soft-delete a blog post
+      description: Requires blog:delete permission. Recoverable via restore endpoint.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Post deleted (soft) }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /blog/cms/{id}/restore:
+    post:
+      tags: [Blog - CMS]
+      summary: Restore a soft-deleted post
+      description: Super_admin only.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Post restored }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /blog/cms/{id}/publish:
+    post:
+      tags: [Blog - CMS]
+      summary: Publish a draft post
+      description: Sets status=published and records publishedAt. Requires blog:write.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Post published
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/BlogPost' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /blog/cms/{id}/archive:
+    post:
+      tags: [Blog - CMS]
+      summary: Archive a published post
+      description: Sets status=archived. Requires blog:write.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Post archived
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/BlogPost' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /blog/cms/{id}/products:
+    get:
+      tags: [Blog - CMS]
+      summary: List products attached to a post
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Attached products
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/BlogProductCard' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+    post:
+      tags: [Blog - CMS]
+      summary: Attach a product to a post
+      description: Requires blog:write permission.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [productId]
+              properties:
+                productId:  { type: string, format: uuid }
+                note:       { type: string, maxLength: 500, example: Helps boost recovery }
+                sortOrder:  { type: integer, minimum: 0, default: 0 }
+      responses:
+        '201':
+          description: Product attached
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/BlogProductCard' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /blog/cms/{id}/products/{productId}:
+    patch:
+      tags: [Blog - CMS]
+      summary: Update a product attachment (note / sort order)
+      description: Requires blog:write permission.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: productId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note:      { type: string, maxLength: 500 }
+                sortOrder: { type: integer, minimum: 0 }
+      responses:
+        '200':
+          description: Attachment updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/BlogProductCard' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+    delete:
+      tags: [Blog - CMS]
+      summary: Detach a product from a post
+      description: Requires blog:write permission.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: productId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Product detached }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ── Click (Callbacks from Click servers) ───────────────────────────────────
+
+  /payment/click/prepare:
+    post:
+      tags: [Payments]
+      summary: Click prepare callback (action=0)
+      description: |
+        Called by Click servers when a user opens the payment form.
+        Verifies the order, creates a pending Payment record, and returns merchant_confirm_id.
+        Always returns HTTP 200 — errors are in the response body `error` field.
+        Sign: MD5(click_trans_id+service_id+SECRET_KEY+merchant_trans_id+amount+action+sign_time)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [click_trans_id, service_id, click_paydoc_id, merchant_trans_id, amount, action, sign_time, sign_string]
+              properties:
+                click_trans_id:    { type: integer }
+                service_id:        { type: integer }
+                click_paydoc_id:   { type: integer }
+                merchant_trans_id: { type: string, description: Our order UUID }
+                amount:            { type: number, description: Amount in UZS (whole units) }
+                action:            { type: integer, enum: [0] }
+                sign_time:         { type: string, example: "2026-03-14 12:00:00" }
+                sign_string:       { type: string, description: MD5 signature }
+      responses:
+        '200':
+          description: Prepare result (errors expressed in body)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClickResponse' }
+
+  /payment/click/complete:
+    post:
+      tags: [Payments]
+      summary: Click complete callback (action=1)
+      description: |
+        Called by Click servers after debit succeeds or fails.
+        body.error=0 means success, negative means failure.
+        Sign: MD5(click_trans_id+service_id+SECRET_KEY+merchant_trans_id+merchant_prepare_id+amount+action+sign_time)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [click_trans_id, service_id, click_paydoc_id, merchant_trans_id, merchant_prepare_id, amount, action, sign_time, sign_string, error, error_note]
+              properties:
+                click_trans_id:      { type: integer }
+                service_id:          { type: integer }
+                click_paydoc_id:     { type: integer }
+                merchant_trans_id:   { type: string }
+                merchant_prepare_id: { type: string, description: payment.id returned from prepare }
+                amount:              { type: number }
+                action:              { type: integer, enum: [1] }
+                error:               { type: integer, description: "0=success, negative=failure" }
+                error_note:          { type: string }
+                sign_time:           { type: string }
+                sign_string:         { type: string }
+      responses:
+        '200':
+          description: Complete result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClickResponse' }
+
+  /payment/click/checkout-url:
+    get:
+      tags: [Payments]
+      summary: Generate Click checkout URL for an order
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: orderId
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Click checkout URL
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          url:        { type: string, format: uri }
+                          orderId:    { type: string, format: uuid }
+                          amountUzs:  { type: integer }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ── Payment CMS (admin transaction panel) ──────────────────────────────────
+
+  /payment/cms/transactions:
+    get:
+      tags: [Payments - CMS]
+      summary: List all payment transactions (admin)
+      description: |
+        Paginated list of all payment attempts across all stores.
+        Requires payments:read permission.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: store
+          in: query
+          schema: { type: string, enum: [nutrition, kids, halal] }
+        - name: provider
+          in: query
+          schema: { type: string, enum: [click, payme] }
+        - name: status
+          in: query
+          schema: { type: string, enum: [pending, paid, failed, cancelled, expired, refunded] }
+        - name: orderId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: dateFrom
+          in: query
+          schema: { type: string, format: date-time }
+        - name: dateTo
+          in: query
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+      responses:
+        '200':
+          description: Paginated transaction list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          payments:
+                            type: array
+                            items: { $ref: '#/components/schemas/PaymentTransaction' }
+                          total:  { type: integer }
+                          limit:  { type: integer }
+                          offset: { type: integer }
+                          pages:  { type: integer }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /payment/cms/transactions/{id}:
+    get:
+      tags: [Payments - CMS]
+      summary: Get a single payment transaction
+      description: Returns full payment detail including order summary.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Payment transaction detail
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/PaymentTransaction' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /payment/cms/transactions/{id}/click-status:
+    get:
+      tags: [Payments - CMS]
+      summary: Query Click real-time payment status
+      description: |
+        Calls Click Merchant API to fetch the live status of a Click transaction.
+        Priority: click_trans_id → invoice_id → merchant_trans_id.
+        Requires payments:read permission.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+          description: Our internal payment UUID
+      responses:
+        '200':
+          description: Click-side status fetched
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          paymentId:   { type: string, format: uuid }
+                          clickStatus:
+                            type: object
+                            properties:
+                              source:          { type: string, enum: [payment, invoice, mti] }
+                              error_code:      { type: integer }
+                              error_note:      { type: string }
+                              payment_status:  { type: integer, nullable: true }
+                              invoice_status:  { type: integer, nullable: true }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /payment/cms/transactions/{id}/reversal:
+    delete:
+      tags: [Payments - CMS]
+      summary: Reverse (refund) a completed Click payment
+      description: |
+        Calls Click Merchant API to cancel a successful payment.
+        Click conditions apply:
+          - Payment must be in the current billing month
+          - Previous-month payments only on the 1st of the next month
+          - UZCARD may reject the reversal
+        Requires payments:write permission.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+          description: Our internal payment UUID
+      responses:
+        '200':
+          description: Payment reversed — status set to refunded
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/SuccessResponse' }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          paymentId:     { type: string, format: uuid }
+                          clickPaymentId: { type: integer }
+                          status:        { type: string, example: refunded }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
