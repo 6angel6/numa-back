@@ -52,8 +52,21 @@ export const reservationService = {
                throw new ConflictError('Table was just booked by another customer. Please select a different time.');
             }
 
-            // 5. Create reservation inside a transaction
+            // 5. Create reservation inside a transaction with DB-level pessimistic lock
             return db.transaction(async (t) => {
+               // FOR UPDATE on conflicting rows — serialises concurrent requests that
+               // bypassed the Redis lock (Redis failure / advisory-lock hash collision)
+               const conflicts = await reservationRepository.countConflictsWithLock(
+                  input.tableId,
+                  input.reservationDate,
+                  input.startTime,
+                  input.endTime ?? null,
+                  t,
+               );
+               if (conflicts > 0) {
+                  throw new ConflictError('Table was just booked by another customer. Please select a different time.');
+               }
+
                const reservation = await reservationRepository.create({
                   tableId: input.tableId,
                   customerName: input.customerName,

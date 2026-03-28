@@ -2,12 +2,17 @@ import { cateringOrderRepository } from '../repository/cateringOrderRepository';
 import { cateringCartRepository } from '../repository/cateringCartRepository';
 import { menuItemRepository } from '../repository/menuItemRepository';
 import { tableRepository } from '../repository/tableRepository';
+import { paymentRepository } from '../../payment/repository/paymentRepository';
+import { PaymentProvider } from '../../payment/model/Payment';
+import { buildPaymeCheckoutUrl } from '../../payment/dto/paymeDto';
+import { buildClickCheckoutUrl } from '../../payment/dto/clickDto';
 import {
    CateringOrderType,
    CateringOrderStatus,
    CateringPaymentMethod,
    CateringPaymentStatus,
 } from '../model/CateringOrder';
+import { StoreSlug } from '../../types';
 import { db } from '../../../shared/config/database';
 import { NotFoundError, BadRequestError } from '../../../shared/utils/errors';
 import logger from '../../../shared/utils/logger';
@@ -55,21 +60,29 @@ export const cateringOrderService = {
          }
       }
 
-      // 3. Transaction: snapshot items, create order, clear cart
+      // 3. Bulk-load menu items (1 query instead of N) before entering the transaction
+      const menuItemIds = items.map((i) => i.menuItemId);
+      const menuItems = await menuItemRepository.findManyByIds(menuItemIds);
+      const menuItemMap = new Map(menuItems.map((m) => [m.id, m]));
+
+      // Validate all items before acquiring the transaction lock
+      for (const cartItem of items) {
+         const menuItem = menuItemMap.get(cartItem.menuItemId);
+         if (!menuItem) {
+            throw new NotFoundError(`Menu item ${cartItem.menuItemId} not found`);
+         }
+         if (!menuItem.isAvailable) {
+            throw new BadRequestError(`Menu item "${(menuItem.name as any).ru ?? menuItem.id}" is no longer available`);
+         }
+      }
+
+      // 4. Transaction: snapshot items, create order, clear cart
       const result = await db.transaction(async (t) => {
          const orderItems: OrderItemSnapshot[] = [];
          let totalAmount = 0;
 
-         // Snapshot each item with current price
          for (const cartItem of items) {
-            const menuItem = await menuItemRepository.findById(cartItem.menuItemId, t);
-            if (!menuItem) {
-               throw new NotFoundError(`Menu item ${cartItem.menuItemId} not found`);
-            }
-            if (!menuItem.isAvailable) {
-               throw new BadRequestError(`Menu item "${menuItem.name.uz}" is no longer available`);
-            }
-
+            const menuItem = menuItemMap.get(cartItem.menuItemId)!;
             const unitPrice = Number(menuItem.discountPrice ?? menuItem.price);
             const subtotal = unitPrice * cartItem.quantity;
 
@@ -100,6 +113,26 @@ export const cateringOrderService = {
             t,
          );
 
+         // Create Payment record for online payments (inside same transaction for atomicity)
+         if (
+            input.paymentMethod === CateringPaymentMethod.CLICK ||
+            input.paymentMethod === CateringPaymentMethod.PAYME
+         ) {
+            const provider = input.paymentMethod === CateringPaymentMethod.CLICK
+               ? PaymentProvider.CLICK
+               : PaymentProvider.PAYME;
+            await paymentRepository.create(
+               {
+                  cateringOrderId: order.id,
+                  store:           StoreSlug.RESTAURANT,
+                  provider,
+                  amountTiyin:     Math.round(totalAmount * 100),
+                  expiresAt:       new Date(Date.now() + 2 * 60 * 60 * 1000), // 2h
+               },
+               t,
+            );
+         }
+
          // Clear cart
          await cateringCartRepository.clearCart(cart.id);
          await cateringCartRepository.deleteByToken(sessionToken);
@@ -119,8 +152,26 @@ export const cateringOrderService = {
          return order;
       });
 
-      // 4. Return full order with items
-      return cateringOrderRepository.findById(result.id);
+      // Build payment URL after commit (outside transaction — external URL, no DB write)
+      let paymentUrl: string | null = null;
+      if (input.paymentMethod === CateringPaymentMethod.CLICK) {
+         paymentUrl = buildClickCheckoutUrl(
+            process.env.CLICK_SERVICE_ID  ?? '',
+            process.env.CLICK_MERCHANT_ID ?? '',
+            result.totalAmount,
+            result.id,
+         );
+      } else if (input.paymentMethod === CateringPaymentMethod.PAYME) {
+         paymentUrl = buildPaymeCheckoutUrl(
+            process.env.PAYME_MERCHANT_ID ?? '',
+            result.id,
+            Math.round(Number(result.totalAmount) * 100),
+         );
+      }
+
+      // Return full order with items + payment URL
+      const fullOrder = await cateringOrderRepository.findById(result.id);
+      return { order: fullOrder, paymentUrl };
    },
 
    /**

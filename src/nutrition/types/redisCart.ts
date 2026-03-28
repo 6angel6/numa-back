@@ -22,7 +22,7 @@ import { MealType } from '../model/Dish';
 
 export interface CartDayMeal {
    dishId: string;
-   scheduleId: string;    // ID из menu_schedule (для проверки доступности)
+   scheduleId: string; // ID из menu_schedule (для проверки доступности)
    quantity: number;
    addedAt: number;
    // Price snapshot на момент добавления (для обнаружения изменений)
@@ -38,7 +38,7 @@ export interface CartDayAddon {
 }
 
 export interface CartDay {
-   date: string;          // YYYY-MM-DD
+   date: string; // YYYY-MM-DD
    deliverySlotId: string | null;
 
    // Блюда по типам приёма пищи
@@ -60,12 +60,15 @@ export interface CartDay {
 export interface RedisCalendarCart {
    sessionToken: string;
 
+   // Выбранный подписочный план (null = разовый заказ без скидки)
+   planId: string | null;
+
    // Выбранные дни с заказами
    days: CartDay[];
 
    // Пользовательские фильтры (исключаемые аллергены)
    preferences: {
-      excludeAllergens: string[];   // slug тегов: ["fish", "nuts", "dairy"]
+      excludeAllergens: string[]; // slug тегов: ["fish", "nuts", "dairy"]
    };
 
    createdAt: number;
@@ -129,7 +132,7 @@ export interface EnrichedSlot {
 
 export interface EnrichedCartDay {
    date: string;
-   dayOfWeek: number;    // 0 = Sunday
+   dayOfWeek: number; // 0 = Sunday
 
    // Слот доставки
    deliverySlot: EnrichedSlot | null;
@@ -182,6 +185,11 @@ export interface CartTotals {
    avgDailyFats: number;
    avgDailyCarbs: number;
 
+   // План
+   planId: string | null;
+   planName: Record<string, string> | null;
+   planDiscountPercent: number | null;
+
    // Финансы
    subtotalTiyin: number;
    deliveryFeeTiyin: number;
@@ -217,7 +225,13 @@ export interface CalendarCartSummary {
 }
 
 export interface CartValidationError {
-   type: 'no_slot' | 'slot_full' | 'slot_expired' | 'min_order' | 'empty_day' | 'empty_cart';
+   type:
+      | 'no_slot'
+      | 'slot_full'
+      | 'slot_expired'
+      | 'min_order'
+      | 'empty_day'
+      | 'empty_cart';
    date?: string;
    message: string;
 }
@@ -275,6 +289,7 @@ export function createEmptyCart(sessionToken: string): RedisCalendarCart {
    const now = Date.now();
    return {
       sessionToken,
+      planId: null,
       days: [],
       preferences: {
          excludeAllergens: [],

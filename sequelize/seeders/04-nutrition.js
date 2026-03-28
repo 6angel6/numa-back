@@ -5,29 +5,18 @@ const { v4: uuidv4 } = require('uuid');
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
    async up(queryInterface) {
-      // Check if already seeded
-      const existingTags = await queryInterface.sequelize.query(
-         "SELECT COUNT(*) as count FROM nutrition.tags WHERE slug = 'vegan'",
-         { type: queryInterface.sequelize.QueryTypes.SELECT }
-      );
-
-      if (existingTags[0]?.count > 0) {
-         console.log('✅ Nutrition data already seeded, skipping...');
-         return;
-      }
-
       // ═══════════════════════════════════════════════════════════════════════════
       // TAGS
       // ═══════════════════════════════════════════════════════════════════════════
       const tags = [
-         { id: uuidv4(), name: JSON.stringify({ uz: 'Veganlar uchun', ru: 'Веганское', en: 'Vegan' }), slug: 'vegan', type: 'dietary' },
-         { id: uuidv4(), name: JSON.stringify({ uz: 'Vegetarianlar uchun', ru: 'Вегетарианское', en: 'Vegetarian' }), slug: 'vegetarian', type: 'dietary' },
-         { id: uuidv4(), name: JSON.stringify({ uz: 'Glutensiz', ru: 'Без глютена', en: 'Gluten Free' }), slug: 'gluten-free', type: 'dietary' },
-         { id: uuidv4(), name: JSON.stringify({ uz: 'Laktozsiz', ru: 'Без лактозы', en: 'Lactose Free' }), slug: 'lactose-free', type: 'dietary' },
-         { id: uuidv4(), name: JSON.stringify({ uz: 'Kam kaloriyali', ru: 'Низкокалорийное', en: 'Low Calorie' }), slug: 'low-calorie', type: 'dietary'},
-         { id: uuidv4(), name: JSON.stringify({ uz: 'Yuqori proteinli', ru: 'Высокобелковое', en: 'High Protein' }), slug: 'high-protein', type: 'dietary' },
-         { id: uuidv4(), name: JSON.stringify({ uz: 'Keto', ru: 'Кето', en: 'Keto' }), slug: 'keto', type: 'dietary' },
-         { id: uuidv4(), name: JSON.stringify({ uz: 'Sport ovqatlanish', ru: 'Спортивное питание', en: 'Sports Nutrition' }), slug: 'sports', type: 'dietary' },
+         { id: uuidv4(), name: JSON.stringify({ uz: 'Veganlar uchun', ru: 'Веганское', en: 'Vegan' }), slug: 'vegan' },
+         { id: uuidv4(), name: JSON.stringify({ uz: 'Vegetarianlar uchun', ru: 'Вегетарианское', en: 'Vegetarian' }), slug: 'vegetarian' },
+         { id: uuidv4(), name: JSON.stringify({ uz: 'Glutensiz', ru: 'Без глютена', en: 'Gluten Free' }), slug: 'gluten-free' },
+         { id: uuidv4(), name: JSON.stringify({ uz: 'Laktozsiz', ru: 'Без лактозы', en: 'Lactose Free' }), slug: 'lactose-free' },
+         { id: uuidv4(), name: JSON.stringify({ uz: 'Kam kaloriyali', ru: 'Низкокалорийное', en: 'Low Calorie' }), slug: 'low-calorie'},
+         { id: uuidv4(), name: JSON.stringify({ uz: 'Yuqori proteinli', ru: 'Высокобелковое', en: 'High Protein' }), slug: 'high-protein' },
+         { id: uuidv4(), name: JSON.stringify({ uz: 'Keto', ru: 'Кето', en: 'Keto' }), slug: 'keto' },
+         { id: uuidv4(), name: JSON.stringify({ uz: 'Sport ovqatlanish', ru: 'Спортивное питание', en: 'Sports Nutrition' }), slug: 'sports' },
       ].map(t => ({
          ...t,
          is_active: true,
@@ -51,7 +40,6 @@ module.exports = {
          { id: uuidv4(), name: JSON.stringify({ uz: 'Super food mix', ru: 'Суперфуд микс', en: 'Superfood Mix' }), price_tiyin: 2000000, calories: 50, proteins: 3, fats: 2, carbs: 5 },
       ].map(a => ({
          ...a,
-         category: 'supplement',
          is_active: true,
          created_at: new Date(),
          updated_at: new Date(),
@@ -83,6 +71,7 @@ module.exports = {
             carbs: 12,
             price_tiyin: 4500000,
             image_url: 'https://images.unsplash.com/photo-1525351484163-7529414344d8?w=400',
+            allergens: JSON.stringify(['eggs', 'dairy']),
             is_active: true,
             tag_ids: [highProteinTag],
          },
@@ -97,6 +86,7 @@ module.exports = {
             carbs: 32,
             price_tiyin: 3800000,
             image_url: 'https://images.unsplash.com/photo-1528207776546-365bb710ee93?w=400',
+            allergens: JSON.stringify(['dairy', 'eggs', 'gluten']),
             is_active: true,
             tag_ids: [lowCalTag],
          },
@@ -111,6 +101,7 @@ module.exports = {
             carbs: 45,
             price_tiyin: 4200000,
             image_url: 'https://images.unsplash.com/photo-1517673400267-0251440c45dc?w=400',
+            allergens: JSON.stringify(['dairy', 'gluten', 'nuts']),
             is_active: true,
             tag_ids: [highProteinTag, sportsTag],
          },
@@ -125,6 +116,7 @@ module.exports = {
             carbs: 28,
             price_tiyin: 4800000,
             image_url: 'https://images.unsplash.com/photo-1541519227354-08fa5d50c44d?w=400',
+            allergens: JSON.stringify(['eggs', 'gluten']),
             is_active: true,
             tag_ids: [vegetarianTag],
          },
@@ -141,6 +133,7 @@ module.exports = {
             carbs: 25,
             price_tiyin: 5500000,
             image_url: 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400',
+            allergens: JSON.stringify([]),
             is_active: true,
             tag_ids: [highProteinTag, glutenFreeTag, lowCalTag],
          },
@@ -155,6 +148,7 @@ module.exports = {
             carbs: 35,
             price_tiyin: 7500000,
             image_url: 'https://images.unsplash.com/photo-1467003909585-2f8a72700288?w=400',
+            allergens: JSON.stringify(['fish']),
             is_active: true,
             tag_ids: [highProteinTag, glutenFreeTag],
          },
@@ -169,6 +163,7 @@ module.exports = {
             carbs: 12,
             price_tiyin: 6800000,
             image_url: 'https://images.unsplash.com/photo-1490645935967-10de6ba17061?w=400',
+            allergens: JSON.stringify([]),
             is_active: true,
             tag_ids: [ketoTag, glutenFreeTag, highProteinTag],
          },
@@ -183,6 +178,7 @@ module.exports = {
             carbs: 55,
             price_tiyin: 5200000,
             image_url: 'https://images.unsplash.com/photo-1512621776951-a57141f2eefd?w=400',
+            allergens: JSON.stringify(['soy']),
             is_active: true,
             tag_ids: [veganTag, glutenFreeTag],
          },
@@ -199,6 +195,7 @@ module.exports = {
             carbs: 22,
             price_tiyin: 5000000,
             image_url: 'https://images.unsplash.com/photo-1598515214211-89d3c73ae83b?w=400',
+            allergens: JSON.stringify([]),
             is_active: true,
             tag_ids: [highProteinTag, lowCalTag, glutenFreeTag],
          },
@@ -213,6 +210,7 @@ module.exports = {
             carbs: 15,
             price_tiyin: 6500000,
             image_url: 'https://images.unsplash.com/photo-1519708227418-c8fd9a32b7a2?w=400',
+            allergens: JSON.stringify(['fish']),
             is_active: true,
             tag_ids: [highProteinTag, glutenFreeTag],
          },
@@ -227,6 +225,7 @@ module.exports = {
             carbs: 12,
             price_tiyin: 8500000,
             image_url: 'https://images.unsplash.com/photo-1546833998-877b37c2e5c6?w=400',
+            allergens: JSON.stringify([]),
             is_active: true,
             tag_ids: [highProteinTag, ketoTag, glutenFreeTag],
          },
@@ -241,6 +240,7 @@ module.exports = {
             carbs: 28,
             price_tiyin: 4200000,
             image_url: 'https://images.unsplash.com/photo-1540420773420-3366772f4999?w=400',
+            allergens: JSON.stringify(['soy']),
             is_active: true,
             tag_ids: [veganTag, lowCalTag, glutenFreeTag],
          },
@@ -257,6 +257,7 @@ module.exports = {
             carbs: 18,
             price_tiyin: 2500000,
             image_url: 'https://images.unsplash.com/photo-1622484211148-c51bf8b63f67?w=400',
+            allergens: JSON.stringify(['dairy', 'soy', 'nuts']),
             is_active: true,
             tag_ids: [highProteinTag, sportsTag],
          },
@@ -271,6 +272,7 @@ module.exports = {
             carbs: 28,
             price_tiyin: 2200000,
             image_url: 'https://images.unsplash.com/photo-1488477181946-6428a0291777?w=400',
+            allergens: JSON.stringify(['dairy']),
             is_active: true,
             tag_ids: [vegetarianTag, lowCalTag],
          },
@@ -285,6 +287,7 @@ module.exports = {
             carbs: 10,
             price_tiyin: 3000000,
             image_url: 'https://images.unsplash.com/photo-1599599810769-bcde5a160d32?w=400',
+            allergens: JSON.stringify(['nuts']),
             is_active: true,
             tag_ids: [veganTag, ketoTag, glutenFreeTag],
          },
@@ -323,19 +326,15 @@ module.exports = {
       // DELIVERY SLOTS
       // ═══════════════════════════════════════════════════════════════════════════
       const deliverySlots = [
-         { id: uuidv4(), delivery_date: '2026-03-24', time_start: '08:00', time_end: '10:00', max_orders: 20, delivery_fee_tiyin: 1500000, is_active: true },
-         { id: uuidv4(), delivery_date: '2026-03-24', time_start: '10:00', time_end: '12:00', max_orders: 25, delivery_fee_tiyin: 1500000, is_active: true },
-         { id: uuidv4(), delivery_date: '2026-03-24', time_start: '12:00', time_end: '14:00', max_orders: 30, delivery_fee_tiyin: 1500000, is_active: true },
-         { id: uuidv4(), delivery_date: '2026-03-24', time_start: '14:00', time_end: '16:00', max_orders: 25, delivery_fee_tiyin: 1500000, is_active: true },
-         { id: uuidv4(), delivery_date: '2026-03-24', time_start: '16:00', time_end: '18:00', max_orders: 25, delivery_fee_tiyin: 1500000, is_active: true },
-         { id: uuidv4(), delivery_date: '2026-03-24', time_start: '18:00', time_end: '20:00', max_orders: 30, delivery_fee_tiyin: 2000000, is_active: true },
-         { id: uuidv4(), delivery_date: '2026-03-24', time_start: '20:00', time_end: '22:00', max_orders: 20, delivery_fee_tiyin: 2500000, is_active: true },
+         { id: uuidv4(), time_from: '08:00', time_to: '10:00', max_orders: 20, delivery_fee_tiyin: 1500000, is_active: true },
+         { id: uuidv4(), time_from: '10:00', time_to: '12:00', max_orders: 25, delivery_fee_tiyin: 1500000, is_active: true },
+         { id: uuidv4(), time_from: '12:00', time_to: '14:00', max_orders: 30, delivery_fee_tiyin: 1500000, is_active: true },
+         { id: uuidv4(), time_from: '14:00', time_to: '16:00', max_orders: 25, delivery_fee_tiyin: 1500000, is_active: true },
+         { id: uuidv4(), time_from: '16:00', time_to: '18:00', max_orders: 25, delivery_fee_tiyin: 1500000, is_active: true },
+         { id: uuidv4(), time_from: '18:00', time_to: '20:00', max_orders: 30, delivery_fee_tiyin: 2000000, is_active: true },
+         { id: uuidv4(), time_from: '20:00', time_to: '22:00', max_orders: 20, delivery_fee_tiyin: 2500000, is_active: true },
       ].map(s => ({
          ...s,
-         label: null,
-         orders_count: 0,
-         cutoff_hours: 24,
-         min_order_tiyin: 0,
          created_at: new Date(),
          updated_at: new Date(),
       }));
@@ -349,30 +348,46 @@ module.exports = {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
-      dishes.forEach((dish, index) => {
-         const date = new Date(today);
-         date.setDate(date.getDate() + (index % 14));
+      const breakfastDishes = dishes.filter(d => d.meal_type === 'breakfast');
+      const lunchDishes = dishes.filter(d => d.meal_type === 'lunch');
+      const dinnerDishes = dishes.filter(d => d.meal_type === 'dinner');
+      const snackDishes = dishes.filter(d => d.meal_type === 'snack');
 
-         menuSchedules.push({
-            id: uuidv4(),
-            schedule_date: date,
-            dish_id: dish.id,
-            max_portions: Math.floor(Math.random() * 50) + 30,
-            portions_sold: 0,
-            override_price_tiyin: null,
-            is_available: true,
-            created_at: new Date(),
-            updated_at: new Date(),
-         });
-      });
+      for (let i = 0; i < 14; i++) {
+         const date = new Date(today);
+         date.setDate(date.getDate() + i);
+
+         // Rotate dishes for variety
+         const bfIndex = i % breakfastDishes.length;
+         const lnIndex1 = i % lunchDishes.length;
+         const lnIndex2 = (i + 1) % lunchDishes.length;
+         const dnIndex1 = i % dinnerDishes.length;
+         const dnIndex2 = (i + 1) % dinnerDishes.length;
+         const snIndex = i % snackDishes.length;
+
+         menuSchedules.push(
+            // Breakfast - 2 options
+            { id: uuidv4(), date, meal_type: 'breakfast', dish_id: breakfastDishes[bfIndex].id, max_portions: 50, portions_sold: 0, is_active: true },
+            { id: uuidv4(), date, meal_type: 'breakfast', dish_id: breakfastDishes[(bfIndex + 1) % breakfastDishes.length].id, max_portions: 50, portions_sold: 0, is_active: true },
+            // Lunch - 2 options
+            { id: uuidv4(), date, meal_type: 'lunch', dish_id: lunchDishes[lnIndex1].id, max_portions: 80, portions_sold: 0, is_active: true },
+            { id: uuidv4(), date, meal_type: 'lunch', dish_id: lunchDishes[lnIndex2].id, max_portions: 80, portions_sold: 0, is_active: true },
+            // Dinner - 2 options
+            { id: uuidv4(), date, meal_type: 'dinner', dish_id: dinnerDishes[dnIndex1].id, max_portions: 60, portions_sold: 0, is_active: true },
+            { id: uuidv4(), date, meal_type: 'dinner', dish_id: dinnerDishes[dnIndex2].id, max_portions: 60, portions_sold: 0, is_active: true },
+            // Snack - 1 option
+            { id: uuidv4(), date, meal_type: 'snack', dish_id: snackDishes[snIndex].id, max_portions: 100, portions_sold: 0, is_active: true },
+         );
+      }
 
       const menuSchedulesForInsert = menuSchedules.map(s => ({
          ...s,
+         override_price_tiyin: null,
          created_at: new Date(),
          updated_at: new Date(),
       }));
 
-      await queryInterface.bulkInsert({ tableName: 'menu_schedule', schema: 'nutrition' }, menuSchedulesForInsert);
+      await queryInterface.bulkInsert({ tableName: 'menu_schedules', schema: 'nutrition' }, menuSchedulesForInsert);
 
       console.log(`✅ Nutrition seeded:`);
       console.log(`   Tags: ${tags.length}`);
@@ -383,7 +398,7 @@ module.exports = {
    },
 
    async down(queryInterface) {
-      await queryInterface.bulkDelete({ tableName: 'menu_schedule', schema: 'nutrition' }, null, {});
+      await queryInterface.bulkDelete({ tableName: 'menu_schedules', schema: 'nutrition' }, null, {});
       await queryInterface.bulkDelete({ tableName: 'delivery_slots', schema: 'nutrition' }, null, {});
       await queryInterface.bulkDelete({ tableName: 'dish_tags', schema: 'nutrition' }, null, {});
       await queryInterface.bulkDelete({ tableName: 'dishes', schema: 'nutrition' }, null, {});

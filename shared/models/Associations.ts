@@ -24,8 +24,15 @@ import { Addon } from '../../src/nutrition/model/Addon';
 import { Tag } from '../../src/nutrition/model/Tag';
 import { MenuSchedule } from '../../src/nutrition/model/MenuSchedule';
 import { DeliverySlot } from '../../src/nutrition/model/DeliverySlot';
-import { NutritionOrder, NutritionOrderDay, NutritionOrderItem } from '../../src/nutrition/model/NutritionOrder';
+import {
+   NutritionOrder,
+   NutritionOrderDay,
+   NutritionOrderItem,
+} from '../../src/nutrition/model/NutritionOrder';
+import { SubscriptionPlan } from '../../src/nutrition/model/SubscriptionPlan';
 import { initNutritionModels } from '../../src/nutrition/model/associations';
+import SitePage from '../../src/site/model/SitePage';
+import SiteSection from '../../src/site/model/SiteSection';
 import { db } from '../config/database';
 
 export const setupAssociations = (): void => {
@@ -38,25 +45,41 @@ export const setupAssociations = (): void => {
    Product.belongsTo(Category, { foreignKey: 'categoryId', as: 'category' });
 
    // Product → Media
-   Product.hasMany(ProductMedia, { foreignKey: 'productId', as: 'media', onDelete: 'CASCADE' });
+   Product.hasMany(ProductMedia, {
+      foreignKey: 'productId',
+      as: 'media',
+      onDelete: 'CASCADE',
+   });
    ProductMedia.belongsTo(Product, { foreignKey: 'productId', as: 'product' });
 
    // Cart → CartItems
-   Cart.hasMany(CartItem, { foreignKey: 'cartId', as: 'items', onDelete: 'CASCADE' });
+   Cart.hasMany(CartItem, {
+      foreignKey: 'cartId',
+      as: 'items',
+      onDelete: 'CASCADE',
+   });
    CartItem.belongsTo(Cart, { foreignKey: 'cartId', as: 'cart' });
 
    // CartItem → Product (read-only reference, no cascade)
    CartItem.belongsTo(Product, { foreignKey: 'productId', as: 'product' });
 
    // Order → OrderItems
-   Order.hasMany(OrderItem, { foreignKey: 'orderId', as: 'items', onDelete: 'CASCADE' });
+   Order.hasMany(OrderItem, {
+      foreignKey: 'orderId',
+      as: 'items',
+      onDelete: 'CASCADE',
+   });
    OrderItem.belongsTo(Order, { foreignKey: 'orderId', as: 'order' });
 
    // OrderItem → Product (snapshot reference, no cascade)
    OrderItem.belongsTo(Product, { foreignKey: 'productId', as: 'product' });
 
    // Order → Payments (one order can have multiple attempts; latest is the active one)
-   Order.hasMany(Payment, { foreignKey: 'orderId', as: 'payments', onDelete: 'CASCADE' });
+   Order.hasMany(Payment, {
+      foreignKey: 'orderId',
+      as: 'payments',
+      onDelete: 'CASCADE',
+   });
    Payment.belongsTo(Order, { foreignKey: 'orderId', as: 'order' });
 
    // BlogPost → Author (Admin)
@@ -64,56 +87,171 @@ export const setupAssociations = (): void => {
    Admin.hasMany(BlogPost, { foreignKey: 'authorId', as: 'posts' });
 
    // BlogPost ↔ Product (many-to-many through BlogPostProduct)
-   BlogPost.belongsToMany(Product, { through: BlogPostProduct, foreignKey: 'blogPostId', as: 'products' });
-   Product.belongsToMany(BlogPost, { through: BlogPostProduct, foreignKey: 'productId', as: 'blogPosts' });
-   BlogPostProduct.belongsTo(BlogPost, { foreignKey: 'blogPostId', as: 'blogPost' });
-   BlogPostProduct.belongsTo(Product, { foreignKey: 'productId', as: 'product' });
+   BlogPost.belongsToMany(Product, {
+      through: BlogPostProduct,
+      foreignKey: 'blogPostId',
+      as: 'products',
+   });
+   Product.belongsToMany(BlogPost, {
+      through: BlogPostProduct,
+      foreignKey: 'productId',
+      as: 'blogPosts',
+   });
+   BlogPostProduct.belongsTo(BlogPost, {
+      foreignKey: 'blogPostId',
+      as: 'blogPost',
+   });
+   BlogPostProduct.belongsTo(Product, {
+      foreignKey: 'productId',
+      as: 'product',
+   });
 
    // ── Restaurant ─────────────────────────────────────────────────────────────
 
    // MenuCategory → MenuItems
-   MenuCategory.hasMany(MenuItem, { foreignKey: 'categoryId', as: 'items', onDelete: 'RESTRICT' });
-   MenuItem.belongsTo(MenuCategory, { foreignKey: 'categoryId', as: 'category' });
+   MenuCategory.hasMany(MenuItem, {
+      foreignKey: 'categoryId',
+      as: 'items',
+      onDelete: 'RESTRICT',
+   });
+   MenuItem.belongsTo(MenuCategory, {
+      foreignKey: 'categoryId',
+      as: 'category',
+   });
 
    // RestaurantTable → Reservations
-   RestaurantTable.hasMany(Reservation, { foreignKey: 'tableId', as: 'reservations', onDelete: 'RESTRICT' });
-   Reservation.belongsTo(RestaurantTable, { foreignKey: 'tableId', as: 'table' });
+   RestaurantTable.hasMany(Reservation, {
+      foreignKey: 'tableId',
+      as: 'reservations',
+      onDelete: 'RESTRICT',
+   });
+   Reservation.belongsTo(RestaurantTable, {
+      foreignKey: 'tableId',
+      as: 'table',
+   });
 
    // RestaurantTable → CateringOrders (dine_in, nullable)
-   RestaurantTable.hasMany(CateringOrder, { foreignKey: 'tableId', as: 'cateringOrders' });
-   CateringOrder.belongsTo(RestaurantTable, { foreignKey: 'tableId', as: 'table' });
+   RestaurantTable.hasMany(CateringOrder, {
+      foreignKey: 'tableId',
+      as: 'cateringOrders',
+   });
+   CateringOrder.belongsTo(RestaurantTable, {
+      foreignKey: 'tableId',
+      as: 'table',
+   });
 
    // CateringCart → CateringCartItems
-   CateringCart.hasMany(CateringCartItem, { foreignKey: 'cartId', as: 'items', onDelete: 'CASCADE' });
-   CateringCartItem.belongsTo(CateringCart, { foreignKey: 'cartId', as: 'cart' });
+   CateringCart.hasMany(CateringCartItem, {
+      foreignKey: 'cartId',
+      as: 'items',
+      onDelete: 'CASCADE',
+   });
+   CateringCartItem.belongsTo(CateringCart, {
+      foreignKey: 'cartId',
+      as: 'cart',
+   });
 
    // CateringCartItem → MenuItem (availability reference)
-   CateringCartItem.belongsTo(MenuItem, { foreignKey: 'menuItemId', as: 'menuItem' });
+   CateringCartItem.belongsTo(MenuItem, {
+      foreignKey: 'menuItemId',
+      as: 'menuItem',
+   });
 
    // CateringOrder → CateringOrderItems
-   CateringOrder.hasMany(CateringOrderItem, { foreignKey: 'orderId', as: 'items', onDelete: 'CASCADE' });
-   CateringOrderItem.belongsTo(CateringOrder, { foreignKey: 'orderId', as: 'order' });
+   CateringOrder.hasMany(CateringOrderItem, {
+      foreignKey: 'orderId',
+      as: 'items',
+      onDelete: 'CASCADE',
+   });
+   CateringOrderItem.belongsTo(CateringOrder, {
+      foreignKey: 'orderId',
+      as: 'order',
+   });
 
    // CateringOrderItem → MenuItem (snapshot reference)
-   CateringOrderItem.belongsTo(MenuItem, { foreignKey: 'menuItemId', as: 'menuItem' });
+   CateringOrderItem.belongsTo(MenuItem, {
+      foreignKey: 'menuItemId',
+      as: 'menuItem',
+   });
 
    // Payment → CateringOrder (nullable — restaurant catering payments)
-   Payment.belongsTo(CateringOrder, { foreignKey: 'cateringOrderId', as: 'cateringOrder' });
-   CateringOrder.hasMany(Payment, { foreignKey: 'cateringOrderId', as: 'payments', onDelete: 'CASCADE' });
+   Payment.belongsTo(CateringOrder, {
+      foreignKey: 'cateringOrderId',
+      as: 'cateringOrder',
+   });
+   CateringOrder.hasMany(Payment, {
+      foreignKey: 'cateringOrderId',
+      as: 'payments',
+      onDelete: 'CASCADE',
+   });
 
    // Payment → Reservation (nullable — reservation deposit payments)
-   Payment.belongsTo(Reservation, { foreignKey: 'reservationId', as: 'reservation' });
-   Reservation.hasMany(Payment, { foreignKey: 'reservationId', as: 'payments', onDelete: 'CASCADE' });
+   Payment.belongsTo(Reservation, {
+      foreignKey: 'reservationId',
+      as: 'reservation',
+   });
+   Reservation.hasMany(Payment, {
+      foreignKey: 'reservationId',
+      as: 'payments',
+      onDelete: 'CASCADE',
+   });
+
+   // ── Site CMS ──────────────────────────────────────────────────────────────
+   SitePage.hasMany(SiteSection, {
+      foreignKey: 'pageId',
+      as: 'sections',
+      onDelete: 'CASCADE',
+   });
+   SiteSection.belongsTo(SitePage, { foreignKey: 'pageId', as: 'page' });
 
    // ── Nutrition (FoodTech) ───────────────────────────────────────────────────
    // Initialize nutrition models and their associations
    initNutritionModels(db);
 
    // Payment → NutritionOrder (nullable — nutrition orders)
-   Payment.belongsTo(NutritionOrder, { foreignKey: 'nutritionOrderId', as: 'nutritionOrder' });
-   NutritionOrder.hasMany(Payment, { foreignKey: 'nutritionOrderId', as: 'payments', onDelete: 'CASCADE' });
+   Payment.belongsTo(NutritionOrder, {
+      foreignKey: 'nutritionOrderId',
+      as: 'nutritionOrder',
+   });
+   NutritionOrder.hasMany(Payment, {
+      foreignKey: 'nutritionOrderId',
+      as: 'payments',
+      onDelete: 'CASCADE',
+   });
 };
 
-export { Admin, Category, Product, ProductMedia, Cart, CartItem, Order, OrderItem, Payment, BlogPost, BlogPostProduct };
-export { MenuCategory, MenuItem, RestaurantTable, Reservation, CateringCart, CateringCartItem, CateringOrder, CateringOrderItem };
-export { Dish, Addon, Tag, MenuSchedule, DeliverySlot, NutritionOrder, NutritionOrderDay, NutritionOrderItem };
+export {
+   Admin,
+   Category,
+   Product,
+   ProductMedia,
+   Cart,
+   CartItem,
+   Order,
+   OrderItem,
+   Payment,
+   BlogPost,
+   BlogPostProduct,
+};
+export {
+   MenuCategory,
+   MenuItem,
+   RestaurantTable,
+   Reservation,
+   CateringCart,
+   CateringCartItem,
+   CateringOrder,
+   CateringOrderItem,
+};
+export {
+   Dish,
+   Addon,
+   Tag,
+   MenuSchedule,
+   DeliverySlot,
+   SubscriptionPlan,
+   NutritionOrder,
+   NutritionOrderDay,
+   NutritionOrderItem,
+};
+export { SitePage, SiteSection };

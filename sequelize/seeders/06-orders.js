@@ -51,13 +51,11 @@ module.exports = {
             id: uuidv4(),
             order_id: order1Id,
             product_id: kidsProducts[0].id,
-            product_name: JSON.stringify(kidsProducts[0].name),
+            product_name: kidsProducts[0].name,
             product_sku: kidsProducts[0].sku,
             unit_price: Number(kidsProducts[0].discount_price || kidsProducts[0].price),
             quantity: 2,
             subtotal: order1Total,
-            created_at: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000),
-            updated_at: new Date(),
          });
          payments.push({
             id: uuidv4(),
@@ -95,13 +93,11 @@ module.exports = {
                id: uuidv4(),
                order_id: order2Id,
                product_id: kidsProducts[1].id,
-               product_name: JSON.stringify(kidsProducts[1].name),
+               product_name: kidsProducts[1].name,
                product_sku: kidsProducts[1].sku,
                unit_price: Number(kidsProducts[1].price),
                quantity: 1,
                subtotal: order2Total,
-               created_at: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000),
-               updated_at: new Date(),
             });
             payments.push({
                id: uuidv4(),
@@ -140,13 +136,11 @@ module.exports = {
                id: uuidv4(),
                order_id: order3Id,
                product_id: kidsProducts[2].id,
-               product_name: JSON.stringify(kidsProducts[2].name),
+               product_name: kidsProducts[2].name,
                product_sku: kidsProducts[2].sku,
                unit_price: Number(kidsProducts[2].price),
                quantity: 3,
                subtotal: order3Total,
-               created_at: new Date(),
-               updated_at: new Date(),
             });
             payments.push({
                id: uuidv4(),
@@ -190,26 +184,22 @@ module.exports = {
             id: uuidv4(),
             order_id: order4Id,
             product_id: halalProducts[0].id,
-            product_name: JSON.stringify(halalProducts[0].name),
+            product_name: halalProducts[0].name,
             product_sku: halalProducts[0].sku,
             unit_price: item1Price,
             quantity: 2,
             subtotal: item1Price * 2,
-            created_at: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
-            updated_at: new Date(),
          });
          if (halalProducts.length > 1) {
             orderItems.push({
                id: uuidv4(),
                order_id: order4Id,
                product_id: halalProducts[1].id,
-               product_name: JSON.stringify(halalProducts[1].name),
+               product_name: halalProducts[1].name,
                product_sku: halalProducts[1].sku,
                unit_price: item2Price,
                quantity: 1,
                subtotal: item2Price,
-               created_at: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
-               updated_at: new Date(),
             });
          }
 
@@ -236,13 +226,11 @@ module.exports = {
                id: uuidv4(),
                order_id: order5Id,
                product_id: halalProducts[2].id,
-               product_name: JSON.stringify(halalProducts[2].name),
+               product_name: halalProducts[2].name,
                product_sku: halalProducts[2].sku,
                unit_price: Number(halalProducts[2].price),
                quantity: 5,
                subtotal: order5Total,
-               created_at: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000),
-               updated_at: new Date(),
             });
          }
       }

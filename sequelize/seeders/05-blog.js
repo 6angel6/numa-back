@@ -31,7 +31,7 @@ module.exports = {
                ru: 'При выборе детской одежды самое важное — это качество материала. Одежда из натуральных материалов не навредит коже ребёнка...',
                en: 'When choosing kids clothing, the most important thing is material quality. Clothes made from natural materials will not harm the child\'s skin...'
             }),
-            cover_image_url: 'https://images.unsplash.com/photo-1622290291468-a28f7a7dc6a8?w=800',
+             cover_image: 'https://images.unsplash.com/photo-1622290291468-a28f7a7dc6a8?w=800',
             tags: JSON.stringify(['fashion', 'tips', 'quality']),
             status: 'published',
             published_at: new Date(),
@@ -48,7 +48,7 @@ module.exports = {
                ru: 'Развивающие игрушки играют важную роль в развитии умственных и творческих способностей детей. Конструкторы LEGO — одни из самых популярных и полезных игрушек...',
                en: 'Educational toys play an important role in developing children\'s mental and creative abilities. LEGO constructors are some of the most popular and useful toys...'
             }),
-            cover_image_url: 'https://images.unsplash.com/photo-1558060370-d644479cb6f7?w=800',
+            cover_image: 'https://images.unsplash.com/photo-1558060370-d644479cb6f7?w=800',
             tags: JSON.stringify(['toys', 'education', 'development']),
             status: 'published',
             published_at: new Date(),
@@ -67,7 +67,7 @@ module.exports = {
                ru: 'При выборе халяльного мяса в первую очередь обратите внимание на сертификат. Все продукты в нашем магазине имеют халяльный сертификат...',
                en: 'When choosing halal meat, first pay attention to the certificate. All products in our store have halal certification...'
             }),
-            cover_image_url: 'https://images.unsplash.com/photo-1607623814075-e51df1bdc82f?w=800',
+            cover_image: 'https://images.unsplash.com/photo-1607623814075-e51df1bdc82f?w=800',
             tags: JSON.stringify(['halal', 'meat', 'quality', 'tips']),
             status: 'published',
             published_at: new Date(),
@@ -84,7 +84,7 @@ module.exports = {
                ru: 'Для приготовления вкусного плова самое важное — правильно подобранные продукты. Самаркандская зира и качественная баранина определяют вкус плова...',
                en: 'To make delicious pilaf, the most important thing is properly selected ingredients. Samarkand cumin and quality lamb determine the taste of pilaf...'
             }),
-            cover_image_url: 'https://images.unsplash.com/photo-1633945274405-b6c8069047b0?w=800',
+            cover_image: 'https://images.unsplash.com/photo-1633945274405-b6c8069047b0?w=800',
             tags: JSON.stringify(['recipes', 'traditional', 'pilaf']),
             status: 'published',
             published_at: new Date(),
@@ -103,7 +103,7 @@ module.exports = {
                ru: 'Здоровое питание — это не только похудение, но и общее здоровье и благополучие. Правильный баланс — это соотношение белков, жиров и углеводов...',
                en: 'Healthy eating is not just about weight loss, but overall health and well-being. The right balance is the ratio of proteins, fats and carbohydrates...'
             }),
-            cover_image_url: 'https://images.unsplash.com/photo-1490645935967-10de6ba17061?w=800',
+            cover_image: 'https://images.unsplash.com/photo-1490645935967-10de6ba17061?w=800',
             tags: JSON.stringify(['nutrition', 'health', 'tips']),
             status: 'published',
             published_at: new Date(),
@@ -120,7 +120,7 @@ module.exports = {
                ru: 'При занятиях спортом правильное питание — ключ к достижению результатов. Количество белка, калорий и витаминов должно быть правильно рассчитано...',
                en: 'When exercising, proper nutrition is the key to achieving results. The amount of protein, calories and vitamins should be correctly calculated...'
             }),
-            cover_image_url: 'https://images.unsplash.com/photo-1517836357463-d25dfeac3438?w=800',
+            cover_image: 'https://images.unsplash.com/photo-1517836357463-d25dfeac3438?w=800',
             tags: JSON.stringify(['sports', 'protein', 'fitness']),
             status: 'published',
             published_at: new Date(),
@@ -137,7 +137,7 @@ module.exports = {
                ru: 'Кето диета — это способ питания с низким содержанием углеводов и высоким содержанием жиров. Эта диета приводит организм в состояние кетоза, в результате чего жир служит основным источником энергии...',
                en: 'Keto diet is a low-carbohydrate and high-fat eating method. This diet puts the body into ketosis, resulting in fat serving as the main energy source...'
             }),
-            cover_image_url: 'https://images.unsplash.com/photo-1547592166-23ac45744acd?w=800',
+            cover_image: 'https://images.unsplash.com/photo-1547592166-23ac45744acd?w=800',
             tags: JSON.stringify(['keto', 'diet', 'weight-loss']),
             status: 'published',
             published_at: new Date(),
@@ -156,7 +156,7 @@ module.exports = {
                ru: 'Эта статья ещё готовится...',
                en: 'This article is still being prepared...'
             }),
-            cover_image_url: null,
+            cover_image: null,
             tags: JSON.stringify(['fasting', 'health']),
             status: 'draft',
             published_at: null,
@@ -164,12 +164,7 @@ module.exports = {
          },
       ].map(p => ({
          ...p,
-         view_count: Math.floor(Math.random() * 500) + 50,
-         distribute_to: JSON.stringify([]),
-         seo_title: null,
-         seo_description: null,
-         seo_keywords: JSON.stringify([]),
-         read_time_minutes: null,
+         views: Math.floor(Math.random() * 500) + 50,
          created_at: new Date(),
          updated_at: new Date(),
       }));

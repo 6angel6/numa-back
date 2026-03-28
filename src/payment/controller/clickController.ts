@@ -6,7 +6,8 @@ import * as apiResponse          from '../../../shared/utils/apiResponse';
 import { handleControllerError } from '../../../shared/utils/controllerErrorHandler';
 import { paymentRepository }     from '../repository/paymentRepository';
 import { PaymentProvider, PaymentStatus } from '../model/Payment';
-import Order, { OrderPaymentStatus }     from '../../order/model/Order';
+import { orderRepository }      from '../../order/repository/orderRepository';
+import { OrderPaymentStatus }   from '../../order/model/Order';
 import logger                    from '../../../shared/utils/logger';
 import { db }                    from '../../../shared/config/database';
 
@@ -77,7 +78,7 @@ export const clickController = {
             return;
          }
 
-         const order = await Order.findByPk(orderId);
+         const order = await orderRepository.findById(orderId);
          if (!order) {
             apiResponse.notFound(res, 'Order not found');
             return;
@@ -201,9 +202,8 @@ export const clickController = {
 
             // Update Order paymentStatus if this payment belongs to an Order
             if (payment.orderId) {
-               await Order.update(
-                  { paymentStatus: OrderPaymentStatus.REFUNDED },
-                  { where: { id: payment.orderId }, transaction: t }
+               await orderRepository.updatePaymentStatus(
+                  payment.orderId, OrderPaymentStatus.REFUNDED, t,
                );
             }
          });

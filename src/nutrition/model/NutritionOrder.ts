@@ -6,13 +6,13 @@ import { DeliverySlot } from './DeliverySlot';
 // =============================================
 
 export type OrderStatus =
-   | 'pending'      // Ожидает оплаты
-   | 'paid'         // Оплачен
-   | 'preparing'    // Готовится
-   | 'ready'        // Готов к доставке
-   | 'delivering'   // В доставке
-   | 'delivered'    // Доставлен
-   | 'cancelled';   // Отменён
+   | 'pending' // Ожидает оплаты
+   | 'paid' // Оплачен
+   | 'preparing' // Готовится
+   | 'ready' // Готов к доставке
+   | 'delivering' // В доставке
+   | 'delivered' // Доставлен
+   | 'cancelled'; // Отменён
 
 export interface NutritionOrderAttributes {
    id: string;
@@ -54,6 +54,12 @@ export interface NutritionOrderAttributes {
 
    notes: string | null;
 
+   // Подписочный план (snapshot)
+   subscriptionPlanId: string | null;
+   snapshotPlanName: Record<string, string> | null;
+   snapshotPlanDaysCount: number | null;
+   snapshotPlanDiscountPercent: number | null;
+
    createdAt: Date;
    updatedAt: Date;
 
@@ -62,14 +68,40 @@ export interface NutritionOrderAttributes {
    days?: NutritionOrderDay[];
 }
 
-export interface NutritionOrderCreationAttributes extends Optional<NutritionOrderAttributes,
-   'id' | 'deliverySlotId' | 'deliveryLat' | 'deliveryLng' | 'deliveryNotes' | 'status' |
-   'deliveryFeeTiyin' | 'discountTiyin' | 'totalCalories' | 'totalProteins' | 'totalFats' | 'totalCarbs' |
-   'paymentMethod' | 'paymentId' | 'paidAt' | 'excludedAllergens' | 'notes' | 'createdAt' | 'updatedAt' |
-   'deliverySlot' | 'days'
-> {}
+export interface NutritionOrderCreationAttributes
+   extends Optional<
+      NutritionOrderAttributes,
+      | 'id'
+      | 'deliverySlotId'
+      | 'deliveryLat'
+      | 'deliveryLng'
+      | 'deliveryNotes'
+      | 'status'
+      | 'deliveryFeeTiyin'
+      | 'discountTiyin'
+      | 'totalCalories'
+      | 'totalProteins'
+      | 'totalFats'
+      | 'totalCarbs'
+      | 'paymentMethod'
+      | 'paymentId'
+      | 'paidAt'
+      | 'excludedAllergens'
+      | 'notes'
+      | 'subscriptionPlanId'
+      | 'snapshotPlanName'
+      | 'snapshotPlanDaysCount'
+      | 'snapshotPlanDiscountPercent'
+      | 'createdAt'
+      | 'updatedAt'
+      | 'deliverySlot'
+      | 'days'
+   > {}
 
-export class NutritionOrder extends Model<NutritionOrderAttributes, NutritionOrderCreationAttributes> implements NutritionOrderAttributes {
+export class NutritionOrder
+   extends Model<NutritionOrderAttributes, NutritionOrderCreationAttributes>
+   implements NutritionOrderAttributes
+{
    declare id: string;
    declare orderNumber: string;
    declare customerName: string;
@@ -93,6 +125,10 @@ export class NutritionOrder extends Model<NutritionOrderAttributes, NutritionOrd
    declare paidAt: Date | null;
    declare excludedAllergens: string[];
    declare notes: string | null;
+   declare subscriptionPlanId: string | null;
+   declare snapshotPlanName: Record<string, string> | null;
+   declare snapshotPlanDaysCount: number | null;
+   declare snapshotPlanDiscountPercent: number | null;
    declare createdAt: Date;
    declare updatedAt: Date;
 
@@ -117,7 +153,7 @@ export interface NutritionOrderDayAttributes {
    deliveryDate: Date;
    // Слот доставки на этот день (FK + snapshot)
    deliverySlotId: string | null;
-   snapshotSlotTime: string | null;        // "10:00 - 14:00"
+   snapshotSlotTime: string | null; // "10:00 - 14:00"
    snapshotDeliveryFeeTiyin: number;
    // КБЖУ дня
    dayCalories: number;
@@ -132,13 +168,30 @@ export interface NutritionOrderDayAttributes {
    items?: NutritionOrderItem[];
 }
 
-export interface NutritionOrderDayCreationAttributes extends Optional<NutritionOrderDayAttributes,
-   'id' | 'deliverySlotId' | 'snapshotSlotTime' | 'snapshotDeliveryFeeTiyin' |
-   'dayCalories' | 'dayProteins' | 'dayFats' | 'dayCarbs' | 'dayTotalTiyin' | 'createdAt' |
-   'deliverySlot' | 'items'
-> {}
+export interface NutritionOrderDayCreationAttributes
+   extends Optional<
+      NutritionOrderDayAttributes,
+      | 'id'
+      | 'deliverySlotId'
+      | 'snapshotSlotTime'
+      | 'snapshotDeliveryFeeTiyin'
+      | 'dayCalories'
+      | 'dayProteins'
+      | 'dayFats'
+      | 'dayCarbs'
+      | 'dayTotalTiyin'
+      | 'createdAt'
+      | 'deliverySlot'
+      | 'items'
+   > {}
 
-export class NutritionOrderDay extends Model<NutritionOrderDayAttributes, NutritionOrderDayCreationAttributes> implements NutritionOrderDayAttributes {
+export class NutritionOrderDay
+   extends Model<
+      NutritionOrderDayAttributes,
+      NutritionOrderDayCreationAttributes
+   >
+   implements NutritionOrderDayAttributes
+{
    declare id: string;
    declare orderId: string;
    declare deliveryDate: Date;
@@ -184,11 +237,19 @@ export interface NutritionOrderItemAttributes {
    createdAt: Date;
 }
 
-export interface NutritionOrderItemCreationAttributes extends Optional<NutritionOrderItemAttributes,
-   'id' | 'dishId' | 'addonId' | 'snapshotMealType' | 'createdAt'
-> {}
+export interface NutritionOrderItemCreationAttributes
+   extends Optional<
+      NutritionOrderItemAttributes,
+      'id' | 'dishId' | 'addonId' | 'snapshotMealType' | 'createdAt'
+   > {}
 
-export class NutritionOrderItem extends Model<NutritionOrderItemAttributes, NutritionOrderItemCreationAttributes> implements NutritionOrderItemAttributes {
+export class NutritionOrderItem
+   extends Model<
+      NutritionOrderItemAttributes,
+      NutritionOrderItemCreationAttributes
+   >
+   implements NutritionOrderItemAttributes
+{
    declare id: string;
    declare orderDayId: string;
    declare itemType: OrderItemType;
@@ -210,7 +271,9 @@ export class NutritionOrderItem extends Model<NutritionOrderItemAttributes, Nutr
 // Init functions
 // =============================================
 
-export function initNutritionOrder(sequelize: Sequelize): typeof NutritionOrder {
+export function initNutritionOrder(
+   sequelize: Sequelize,
+): typeof NutritionOrder {
    NutritionOrder.init(
       {
          id: {
@@ -315,6 +378,22 @@ export function initNutritionOrder(sequelize: Sequelize): typeof NutritionOrder 
             type: DataTypes.TEXT,
             allowNull: true,
          },
+         subscriptionPlanId: {
+            type: DataTypes.UUID,
+            allowNull: true,
+         },
+         snapshotPlanName: {
+            type: DataTypes.JSONB,
+            allowNull: true,
+         },
+         snapshotPlanDaysCount: {
+            type: DataTypes.INTEGER,
+            allowNull: true,
+         },
+         snapshotPlanDiscountPercent: {
+            type: DataTypes.DECIMAL(5, 2),
+            allowNull: true,
+         },
          createdAt: DataTypes.DATE,
          updatedAt: DataTypes.DATE,
       },
@@ -324,13 +403,15 @@ export function initNutritionOrder(sequelize: Sequelize): typeof NutritionOrder 
          tableName: 'orders',
          underscored: true,
          timestamps: true,
-      }
+      },
    );
 
    return NutritionOrder;
 }
 
-export function initNutritionOrderDay(sequelize: Sequelize): typeof NutritionOrderDay {
+export function initNutritionOrderDay(
+   sequelize: Sequelize,
+): typeof NutritionOrderDay {
    NutritionOrderDay.init(
       {
          id: {
@@ -400,13 +481,15 @@ export function initNutritionOrderDay(sequelize: Sequelize): typeof NutritionOrd
          timestamps: false,
          createdAt: 'created_at',
          updatedAt: false,
-      }
+      },
    );
 
    return NutritionOrderDay;
 }
 
-export function initNutritionOrderItem(sequelize: Sequelize): typeof NutritionOrderItem {
+export function initNutritionOrderItem(
+   sequelize: Sequelize,
+): typeof NutritionOrderItem {
    NutritionOrderItem.init(
       {
          id: {
@@ -477,7 +560,7 @@ export function initNutritionOrderItem(sequelize: Sequelize): typeof NutritionOr
          timestamps: false,
          createdAt: 'created_at',
          updatedAt: false,
-      }
+      },
    );
 
    return NutritionOrderItem;

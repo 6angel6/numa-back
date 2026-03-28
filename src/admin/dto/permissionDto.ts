@@ -52,6 +52,14 @@ export enum Permission {
    // ── Nutrition: Delivery Slots (слоты доставки) ───────────────────────────
    DELIVERY_SLOTS_READ = 'delivery_slots:read',
    DELIVERY_SLOTS_WRITE = 'delivery_slots:write',
+
+   // ── Nutrition: Subscription Plans ─────────────────────────────────────────
+   SUBSCRIPTION_PLANS_READ = 'subscription_plans:read',
+   SUBSCRIPTION_PLANS_WRITE = 'subscription_plans:write',
+   SUBSCRIPTION_PLANS_DELETE = 'subscription_plans:delete',
+
+   // ── Site CMS ──────────────────────────────────────────────────────────────
+   SITE_MANAGE = 'site:manage',
 }
 
 export const ALL_PERMISSIONS = Object.values(Permission);

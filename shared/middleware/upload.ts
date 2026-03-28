@@ -7,8 +7,10 @@ import { Request } from 'express';
 
 const publicDir      = path.join(process.cwd(), 'public');
 const productMediaDir = path.join(publicDir, 'products/media');
+const siteMediaDir    = path.join(publicDir, 'sites');
 
 if (!fs.existsSync(productMediaDir)) fs.mkdirSync(productMediaDir, { recursive: true });
+if (!fs.existsSync(siteMediaDir))    fs.mkdirSync(siteMediaDir,    { recursive: true });
 
 const imageFileFilter = (
    req: Request,
@@ -56,6 +58,29 @@ export const uploadProductMedia = multer({
    limits: { fileSize: 50 * 1024 * 1024 }, // 50MB (videos)
    fileFilter: imageAndVideoFileFilter,
 }).array('media', 10);
+
+/**
+ * Upload a single site CMS image. Field name: "image".
+ * Store slug comes from req.params.store or req.body.store.
+ * Files land in public/sites/{store}/
+ */
+export const uploadSiteImage = multer({
+   storage: multer.diskStorage({
+      destination: (req, file, cb) => {
+         const store = req.params.store || req.body.store || 'common';
+         const dir   = path.join(siteMediaDir, store);
+         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+         cb(null, dir);
+      },
+      filename: (req, file, cb) => {
+         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+         const ext = path.extname(file.originalname);
+         cb(null, `site-${uniqueSuffix}${ext}`);
+      },
+   }),
+   limits:     { fileSize: 10 * 1024 * 1024 }, // 10MB
+   fileFilter: imageFileFilter,
+}).single('image');
 
 /** Compress a single uploaded image to WebP 1080px, replaces req.file in place. */
 export const optimizeImage = async (req: any, res: any, next: any): Promise<void> => {

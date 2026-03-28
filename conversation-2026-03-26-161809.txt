@@ -1,0 +1,14 @@
+╭─── Claude Code v2.1.83 ──────────────────────────────────────────────────────╮
+│                                                    │ Tips for getting        │
+│               Welcome back Yo'ldosh!               │ started                 │
+│                                                    │ Run /init to create a … │
+│                       ▐▛███▜▌                      │ ─────────────────────── │
+│                      ▝▜█████▛▘                     │ Recent activity         │
+│                        ▘▘ ▝▝                       │ No recent activity      │
+│    Sonnet 4.6 · Claude Pro · team@yoldosh.uz's     │                         │
+│    Organization                                    │                         │
+│              ~\WebstormProjects\Numa               │                         │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+  ↑ Install the PyCharm plugin from the JetBrains Marketplace:
+    https://docs.claude.com/s/claude-code-jetbrains

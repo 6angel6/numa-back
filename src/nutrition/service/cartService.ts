@@ -61,11 +61,14 @@ export const calendarCartService = {
    // DAY MANAGEMENT
    // ═══════════════════════════════════════════════════════════════════════
 
-   async addDay(sessionToken: string, date: string): Promise<RedisCalendarCart> {
+   async addDay(
+      sessionToken: string,
+      date: string,
+   ): Promise<RedisCalendarCart> {
       const cart = await this.getOrCreateCart(sessionToken);
 
       // Check if day already exists
-      const existingIndex = cart.days.findIndex(d => d.date === date);
+      const existingIndex = cart.days.findIndex((d) => d.date === date);
       if (existingIndex < 0) {
          cart.days.push(createEmptyCartDay(date));
          // Sort days by date
@@ -76,11 +79,14 @@ export const calendarCartService = {
       return cart;
    },
 
-   async removeDay(sessionToken: string, date: string): Promise<RedisCalendarCart | null> {
+   async removeDay(
+      sessionToken: string,
+      date: string,
+   ): Promise<RedisCalendarCart | null> {
       const cart = await this.getCart(sessionToken);
       if (!cart) return null;
 
-      cart.days = cart.days.filter(d => d.date !== date);
+      cart.days = cart.days.filter((d) => d.date !== date);
       await this.saveCart(cart);
       return cart;
    },
@@ -95,7 +101,7 @@ export const calendarCartService = {
       mealType: MealType,
       dishId: string,
       scheduleId: string,
-      quantity: number = 1
+      quantity: number = 1,
    ): Promise<RedisCalendarCart> {
       // Загружаем schedule для получения актуальной цены
       const schedule = await MenuSchedule.findByPk(scheduleId, {
@@ -110,12 +116,13 @@ export const calendarCartService = {
          throw new BadRequestError('Dish is sold out for this date');
       }
 
-      const effectivePrice = schedule.overridePriceTiyin ?? Number(schedule.dish.priceTiyin);
+      const effectivePrice =
+         schedule.overridePriceTiyin ?? Number(schedule.dish.priceTiyin);
 
       const cart = await this.getOrCreateCart(sessionToken);
 
       // Find or create day
-      let day = cart.days.find(d => d.date === date);
+      let day = cart.days.find((d) => d.date === date);
       if (!day) {
          day = createEmptyCartDay(date);
          cart.days.push(day);
@@ -138,12 +145,12 @@ export const calendarCartService = {
    async removeMeal(
       sessionToken: string,
       date: string,
-      mealType: MealType
+      mealType: MealType,
    ): Promise<RedisCalendarCart | null> {
       const cart = await this.getCart(sessionToken);
       if (!cart) return null;
 
-      const day = cart.days.find(d => d.date === date);
+      const day = cart.days.find((d) => d.date === date);
       if (day) {
          day.meals[mealType] = null;
       }
@@ -156,12 +163,12 @@ export const calendarCartService = {
       sessionToken: string,
       date: string,
       mealType: MealType,
-      quantity: number
+      quantity: number,
    ): Promise<RedisCalendarCart | null> {
       const cart = await this.getCart(sessionToken);
       if (!cart) return null;
 
-      const day = cart.days.find(d => d.date === date);
+      const day = cart.days.find((d) => d.date === date);
       if (day && day.meals[mealType]) {
          if (quantity <= 0) {
             day.meals[mealType] = null;
@@ -182,7 +189,7 @@ export const calendarCartService = {
       sessionToken: string,
       date: string,
       addonId: string,
-      quantity: number = 1
+      quantity: number = 1,
    ): Promise<RedisCalendarCart> {
       // Загружаем addon для получения актуальной цены
       const addon = await Addon.findByPk(addonId);
@@ -193,7 +200,7 @@ export const calendarCartService = {
       const cart = await this.getOrCreateCart(sessionToken);
 
       // Find or create day
-      let day = cart.days.find(d => d.date === date);
+      let day = cart.days.find((d) => d.date === date);
       if (!day) {
          day = createEmptyCartDay(date);
          cart.days.push(day);
@@ -201,7 +208,7 @@ export const calendarCartService = {
       }
 
       // Find existing addon
-      const existingIndex = day.addons.findIndex(a => a.addonId === addonId);
+      const existingIndex = day.addons.findIndex((a) => a.addonId === addonId);
       if (existingIndex >= 0) {
          day.addons[existingIndex].quantity += quantity;
       } else {
@@ -221,14 +228,14 @@ export const calendarCartService = {
       sessionToken: string,
       date: string,
       addonId: string,
-      quantity: number
+      quantity: number,
    ): Promise<RedisCalendarCart | null> {
       const cart = await this.getCart(sessionToken);
       if (!cart) return null;
 
-      const day = cart.days.find(d => d.date === date);
+      const day = cart.days.find((d) => d.date === date);
       if (day) {
-         const addonIndex = day.addons.findIndex(a => a.addonId === addonId);
+         const addonIndex = day.addons.findIndex((a) => a.addonId === addonId);
          if (addonIndex >= 0) {
             if (quantity <= 0) {
                day.addons.splice(addonIndex, 1);
@@ -245,7 +252,7 @@ export const calendarCartService = {
    async removeAddon(
       sessionToken: string,
       date: string,
-      addonId: string
+      addonId: string,
    ): Promise<RedisCalendarCart | null> {
       return this.updateAddonQuantity(sessionToken, date, addonId, 0);
    },
@@ -257,12 +264,12 @@ export const calendarCartService = {
    async setDeliverySlot(
       sessionToken: string,
       date: string,
-      slotId: string
+      slotId: string,
    ): Promise<RedisCalendarCart | null> {
       const cart = await this.getCart(sessionToken);
       if (!cart) return null;
 
-      const day = cart.days.find(d => d.date === date);
+      const day = cart.days.find((d) => d.date === date);
       if (day) {
          day.deliverySlotId = slotId;
       }
@@ -277,7 +284,7 @@ export const calendarCartService = {
 
    async setExcludedAllergens(
       sessionToken: string,
-      allergenSlugs: string[]
+      allergenSlugs: string[],
    ): Promise<RedisCalendarCart> {
       const cart = await this.getOrCreateCart(sessionToken);
       cart.preferences.excludeAllergens = allergenSlugs;
@@ -287,7 +294,7 @@ export const calendarCartService = {
 
    async addExcludedAllergen(
       sessionToken: string,
-      allergenSlug: string
+      allergenSlug: string,
    ): Promise<RedisCalendarCart> {
       const cart = await this.getOrCreateCart(sessionToken);
       if (!cart.preferences.excludeAllergens.includes(allergenSlug)) {
@@ -299,12 +306,25 @@ export const calendarCartService = {
 
    async removeExcludedAllergen(
       sessionToken: string,
-      allergenSlug: string
+      allergenSlug: string,
    ): Promise<RedisCalendarCart> {
       const cart = await this.getOrCreateCart(sessionToken);
-      cart.preferences.excludeAllergens = cart.preferences.excludeAllergens.filter(
-         a => a !== allergenSlug
-      );
+      cart.preferences.excludeAllergens =
+         cart.preferences.excludeAllergens.filter((a) => a !== allergenSlug);
+      await this.saveCart(cart);
+      return cart;
+   },
+
+   // ═══════════════════════════════════════════════════════════════════════
+   // SUBSCRIPTION PLAN
+   // ═══════════════════════════════════════════════════════════════════════
+
+   async setPlan(
+      sessionToken: string,
+      planId: string | null,
+   ): Promise<RedisCalendarCart> {
+      const cart = await this.getOrCreateCart(sessionToken);
+      cart.planId = planId;
       await this.saveCart(cart);
       return cart;
    },

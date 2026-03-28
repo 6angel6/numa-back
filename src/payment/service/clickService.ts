@@ -9,14 +9,16 @@
  * Errors are expressed in the `error` field of the response (not HTTP status).
  */
 
-import Order, { OrderPaymentStatus } from '../../order/model/Order';
-import { orderRepository }           from '../../order/repository/orderRepository';
-import Reservation, { ReservationStatus } from '../../restaurant/model/Reservation';
-import { reservationRepository }     from '../../restaurant/repository/reservationRepository';
-import { NutritionOrder }            from '../../nutrition/model/NutritionOrder';
-import { paymentRepository }         from '../repository/paymentRepository';
-import { PaymentProvider, PaymentStatus } from '../model/Payment';
-import { StoreSlug }                 from '../../types';
+import Order, { OrderPaymentStatus }               from '../../order/model/Order';
+import { orderRepository }                          from '../../order/repository/orderRepository';
+import Reservation, { ReservationStatus }           from '../../restaurant/model/Reservation';
+import { reservationRepository }                    from '../../restaurant/repository/reservationRepository';
+import CateringOrder, { CateringPaymentStatus }     from '../../restaurant/model/CateringOrder';
+import { cateringOrderRepository }                  from '../../restaurant/repository/cateringOrderRepository';
+import { NutritionOrder }                           from '../../nutrition/model/NutritionOrder';
+import { paymentRepository }                        from '../repository/paymentRepository';
+import { PaymentProvider, PaymentStatus }           from '../model/Payment';
+import { StoreSlug }                                from '../../types';
 import {
    ClickPrepareBody, ClickCompleteBody, ClickResponse,
    CLICK_ERR, CLICK_ERR_NOTE, verifyClickSign,
@@ -55,6 +57,57 @@ function okResp(
 
 const secretKey = (): string => process.env.CLICK_SECRET_KEY ?? '';
 
+// ─── Entity resolution ────────────────────────────────────────────────────────
+
+interface ClickContext {
+   order?:         Order         | null;
+   reservation?:   Reservation   | null;
+   nutritionOrder?: InstanceType<typeof NutritionOrder> | null;
+   cateringOrder?: CateringOrder | null;
+   expectedAmount: number;       // UZS whole units
+   storeSlug:      StoreSlug;
+   contextRef:     Record<string, string>;
+}
+
+/**
+ * Resolve the payable entity from merchant_trans_id (our entity UUID).
+ * Tries all four entity types in parallel — O(1) DB round-trips with Promise.all.
+ */
+async function resolveClickContext(merchantTransId: string): Promise<ClickContext | null> {
+   const [order, reservation, nutritionOrder, cateringOrder] = await Promise.all([
+      Order.findByPk(merchantTransId),
+      Reservation.findByPk(merchantTransId),
+      NutritionOrder.findByPk(merchantTransId),
+      CateringOrder.findByPk(merchantTransId),
+   ]);
+
+   if (!order && !reservation && !nutritionOrder && !cateringOrder) return null;
+
+   let expectedAmount: number;
+   let storeSlug: StoreSlug;
+   let contextRef: Record<string, string>;
+
+   if (order) {
+      expectedAmount = Number(order.totalAmount);
+      storeSlug      = order.store;
+      contextRef     = { orderId: order.id };
+   } else if (reservation) {
+      expectedAmount = reservation.depositAmount || 0;
+      storeSlug      = StoreSlug.RESTAURANT;
+      contextRef     = { reservationId: reservation.id };
+   } else if (nutritionOrder) {
+      expectedAmount = Number(nutritionOrder.totalTiyin) / 100;
+      storeSlug      = StoreSlug.NUTRITION;
+      contextRef     = { nutritionOrderId: nutritionOrder.id };
+   } else {
+      expectedAmount = Number(cateringOrder!.totalAmount);
+      storeSlug      = StoreSlug.RESTAURANT;
+      contextRef     = { cateringOrderId: cateringOrder!.id };
+   }
+
+   return { order, reservation, nutritionOrder, cateringOrder, expectedAmount, storeSlug, contextRef };
+}
+
 // ─── Handlers ─────────────────────────────────────────────────────────────────
 
 /**
@@ -71,22 +124,16 @@ async function prepare(body: ClickPrepareBody): Promise<ClickResponse> {
       return errResp(body, CLICK_ERR.SIGN_FAILED);
    }
 
-   // 2. Context lookup: Order, Reservation, or NutritionOrder
-   const order = await Order.findByPk(body.merchant_trans_id);
-   const reservation = !order ? await Reservation.findByPk(body.merchant_trans_id) : null;
-   const nutritionOrder = !order && !reservation ? await NutritionOrder.findByPk(body.merchant_trans_id) : null;
-
-   if (!order && !reservation && !nutritionOrder) {
-      logger.warn({ merchant_trans_id: body.merchant_trans_id }, 'click.prepare: order/reservation/nutritionOrder not found');
+   // 2. Resolve entity (all types in parallel)
+   const ctx = await resolveClickContext(body.merchant_trans_id);
+   if (!ctx) {
+      logger.warn({ merchant_trans_id: body.merchant_trans_id }, 'click.prepare: entity not found');
       return errResp(body, CLICK_ERR.ORDER_NOT_FOUND);
    }
 
-   // 3. Amount check (NutritionOrder uses tiyin, need to convert to UZS for comparison)
-   const expectedAmount = order
-      ? Number(order.totalAmount)
-      : reservation
-         ? (reservation.depositAmount || 0)
-         : Number(nutritionOrder!.totalTiyin) / 100;
+   const { order, reservation, nutritionOrder, cateringOrder, expectedAmount, storeSlug, contextRef } = ctx;
+
+   // 3. Amount check
    if (Math.round(body.amount) !== Math.round(expectedAmount)) {
       logger.warn({ id: body.merchant_trans_id, expected: expectedAmount, got: body.amount }, 'click.prepare: wrong amount');
       return errResp(body, CLICK_ERR.WRONG_AMOUNT);
@@ -94,22 +141,20 @@ async function prepare(body: ClickPrepareBody): Promise<ClickResponse> {
 
    // 4. Already paid
    if (order && order.paymentStatus === OrderPaymentStatus.PAID) {
-      logger.warn({ orderId: order.id }, 'click.prepare: order already paid');
       return errResp(body, CLICK_ERR.ALREADY_PAID);
    }
    if (reservation && [ReservationStatus.CONFIRMED, ReservationStatus.COMPLETED].includes(reservation.status)) {
-      logger.warn({ reservationId: reservation.id }, 'click.prepare: reservation already confirmed');
       return errResp(body, CLICK_ERR.ALREADY_PAID);
    }
    if (nutritionOrder && ['paid', 'confirmed', 'preparing', 'ready', 'delivering', 'delivered'].includes(nutritionOrder.status)) {
-      logger.warn({ nutritionOrderId: nutritionOrder.id }, 'click.prepare: nutrition order already paid');
+      return errResp(body, CLICK_ERR.ALREADY_PAID);
+   }
+   if (cateringOrder && cateringOrder.paymentStatus === CateringPaymentStatus.PAID) {
       return errResp(body, CLICK_ERR.ALREADY_PAID);
    }
 
-   // 5. Idempotency — if a payment for this click_trans_id already exists, return it
-   const existing = await paymentRepository.findByProviderTxId(
-      String(body.click_trans_id), PaymentProvider.CLICK,
-   );
+   // 5. Idempotency — existing payment for this click_trans_id
+   const existing = await paymentRepository.findByProviderTxId(String(body.click_trans_id), PaymentProvider.CLICK);
    if (existing) {
       if ([PaymentStatus.CANCELLED, PaymentStatus.FAILED, PaymentStatus.EXPIRED].includes(existing.status)) {
          return errResp(body, CLICK_ERR.TX_CANCELLED, existing.id);
@@ -117,13 +162,14 @@ async function prepare(body: ClickPrepareBody): Promise<ClickResponse> {
       return okResp(body, existing.id);
    }
 
-   // 5b. Checkout may have pre-created a pending Payment with null providerTransactionId.
-   //     Update it instead of creating a duplicate record.
-   const preCreated = order
-      ? await paymentRepository.findPendingByOrderAndProvider(order.id, PaymentProvider.CLICK)
-      : reservation
-         ? await paymentRepository.findPendingByReservationAndProvider(reservation.id, PaymentProvider.CLICK)
-         : await paymentRepository.findPendingByNutritionOrderAndProvider(nutritionOrder!.id, PaymentProvider.CLICK);
+   // 5b. Checkout may have pre-created a pending Payment — update it
+   const preCreated = contextRef.orderId
+      ? await paymentRepository.findPendingByOrderAndProvider(contextRef.orderId, PaymentProvider.CLICK)
+      : contextRef.reservationId
+         ? await paymentRepository.findPendingByReservationAndProvider(contextRef.reservationId, PaymentProvider.CLICK)
+         : contextRef.nutritionOrderId
+            ? await paymentRepository.findPendingByNutritionOrderAndProvider(contextRef.nutritionOrderId, PaymentProvider.CLICK)
+            : await paymentRepository.findPendingByCateringOrderAndProvider(contextRef.cateringOrderId!, PaymentProvider.CLICK);
 
    if (preCreated) {
       await paymentRepository.update(preCreated.id, {
@@ -135,33 +181,13 @@ async function prepare(body: ClickPrepareBody): Promise<ClickResponse> {
             signTime:      body.sign_time,
          },
       });
-      logger.info(
-         {
-            contextId:     order?.id || reservation?.id || nutritionOrder!.id,
-            contextType:   order ? 'order' : reservation ? 'reservation' : 'nutritionOrder',
-            clickTransId:  body.click_trans_id,
-            paymentId:     preCreated.id,
-         },
-         'click.prepare: linked checkout-created payment to click transaction',
-      );
+      logger.info({ contextRef, clickTransId: body.click_trans_id, paymentId: preCreated.id }, 'click.prepare: linked checkout-created payment');
       return okResp(body, preCreated.id);
    }
 
-   // 6. Create Payment record (fallback — user paid without going through our checkout)
+   // 6. Create Payment record (user paid without going through our checkout)
    const amountTiyin = Math.round(body.amount * 100);
-   const storeSlug = order
-      ? order.store
-      : reservation
-         ? StoreSlug.RESTAURANT
-         : StoreSlug.NUTRITION;
-
    const payment = await db.transaction(async (t) => {
-      const contextRef = order
-         ? { orderId: order.id }
-         : reservation
-            ? { reservationId: reservation.id }
-            : { nutritionOrderId: nutritionOrder!.id };
-
       const p = await paymentRepository.create({
          ...contextRef,
          store:                 storeSlug,
@@ -169,26 +195,13 @@ async function prepare(body: ClickPrepareBody): Promise<ClickResponse> {
          amountTiyin,
          providerTransactionId: String(body.click_trans_id),
          providerPayload:       { clickTransId: body.click_trans_id, clickPaydocId: body.click_paydoc_id, signTime: body.sign_time },
-         expiresAt:             new Date(Date.now() + 2 * 60 * 60 * 1000), // 2h
+         expiresAt:             new Date(Date.now() + 2 * 60 * 60 * 1000),
       }, t);
-
-      if (order) {
-         await orderRepository.updatePaymentStatus(order.id, OrderPaymentStatus.PENDING, t);
-      }
-      // Reservation and NutritionOrder status remains pending until completion
-
+      if (order) await orderRepository.updatePaymentStatus(order.id, OrderPaymentStatus.PENDING, t);
       return p;
    });
 
-   logger.info(
-      {
-         contextId:     order?.id || reservation?.id || nutritionOrder!.id,
-         contextType:   order ? 'order' : reservation ? 'reservation' : 'nutritionOrder',
-         clickTransId:  body.click_trans_id,
-         paymentId:     payment.id,
-      },
-      'click.prepare: payment record created',
-   );
+   logger.info({ contextRef, clickTransId: body.click_trans_id, paymentId: payment.id }, 'click.prepare: payment record created');
    return okResp(body, payment.id);
 }
 
@@ -196,8 +209,6 @@ async function prepare(body: ClickPrepareBody): Promise<ClickResponse> {
  * complete (action = 1)
  *
  * Called after the debit is processed (success or failure).
- * If body.error === 0, we mark the order as paid.
- * If body.error < 0, we mark it as failed.
  */
 async function complete(body: ClickCompleteBody): Promise<ClickResponse> {
    // 1. Signature
@@ -220,19 +231,10 @@ async function complete(body: ClickCompleteBody): Promise<ClickResponse> {
             status:          PaymentStatus.FAILED,
             providerPayload: { ...(payment.providerPayload as object ?? {}), clickError: body.error, clickErrorNote: body.error_note },
          }, t);
-
-         if (payment.orderId) {
-            await orderRepository.updatePaymentStatus(payment.orderId, OrderPaymentStatus.FAILED, t);
-         }
-         if (payment.reservationId) {
-            await reservationRepository.updateStatus(payment.reservationId, ReservationStatus.CANCELLED, null, t);
-         }
-         if (payment.nutritionOrderId) {
-            await NutritionOrder.update(
-               { status: 'cancelled' },
-               { where: { id: payment.nutritionOrderId }, transaction: t },
-            );
-         }
+         if (payment.orderId)          await orderRepository.updatePaymentStatus(payment.orderId, OrderPaymentStatus.FAILED, t);
+         if (payment.reservationId)    await reservationRepository.updateStatus(payment.reservationId, ReservationStatus.CANCELLED, null, t);
+         if (payment.nutritionOrderId) await NutritionOrder.update({ status: 'cancelled' }, { where: { id: payment.nutritionOrderId }, transaction: t });
+         if (payment.cateringOrderId)  await cateringOrderRepository.updatePaymentStatus(payment.cateringOrderId, CateringPaymentStatus.FAILED, t);
       });
       logger.warn({ paymentId: payment.id, clickError: body.error }, 'click.complete: payment failed by Click');
       return errResp(body, body.error, payment.id);
@@ -250,33 +252,16 @@ async function complete(body: ClickCompleteBody): Promise<ClickResponse> {
       await paymentRepository.update(payment.id, {
          status:          PaymentStatus.PAID,
          paidAt:          now,
-         providerPayload: {
-            ...(payment.providerPayload as object ?? {}),
-            completeTime: now.getTime(),
-            clickPaydocId: body.click_paydoc_id,
-         },
+         providerPayload: { ...(payment.providerPayload as object ?? {}), completeTime: now.getTime(), clickPaydocId: body.click_paydoc_id },
       }, t);
-
-      if (payment.orderId) {
-         await orderRepository.updatePaymentStatus(payment.orderId, OrderPaymentStatus.PAID, t);
-      }
-      if (payment.reservationId) {
-         await reservationRepository.updateStatus(payment.reservationId, ReservationStatus.CONFIRMED, now, t);
-      }
-      if (payment.nutritionOrderId) {
-         await NutritionOrder.update(
-            { status: 'paid', paidAt: now },
-            { where: { id: payment.nutritionOrderId }, transaction: t },
-         );
-      }
+      if (payment.orderId)          await orderRepository.updatePaymentStatus(payment.orderId, OrderPaymentStatus.PAID, t);
+      if (payment.reservationId)    await reservationRepository.updateStatus(payment.reservationId, ReservationStatus.CONFIRMED, now, t);
+      if (payment.nutritionOrderId) await NutritionOrder.update({ status: 'paid', paidAt: now }, { where: { id: payment.nutritionOrderId }, transaction: t });
+      if (payment.cateringOrderId)  await cateringOrderRepository.updatePaymentStatus(payment.cateringOrderId, CateringPaymentStatus.PAID, t);
    });
 
    logger.info(
-      {
-         paymentId:   payment.id,
-         contextId:   payment.orderId || payment.reservationId || payment.nutritionOrderId,
-         contextType: payment.orderId ? 'order' : payment.reservationId ? 'reservation' : 'nutritionOrder',
-      },
+      { paymentId: payment.id, contextId: payment.orderId || payment.reservationId || payment.nutritionOrderId || payment.cateringOrderId },
       'click.complete: payment confirmed',
    );
    return okResp(body, payment.id);

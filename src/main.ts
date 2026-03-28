@@ -106,7 +106,7 @@ app.use(express.static(path.join(process.cwd(), 'public')));
 app.use('/api/v1', mainRouter);
 app.get('/api/v1/health', healthCheck);
 
-// Main API docs (e-commerce)
+//то Main API docs (e-commerce)
 const swaggerDocument = loadYaml(fs.readFileSync('./swagger.yaml', 'utf8'));
 app.use('/api/v1/api-docs', swaggerUi.serveFiles(swaggerDocument as any), swaggerUi.setup(swaggerDocument as any));
 logger.info('Swagger UI available at /api/v1/api-docs');

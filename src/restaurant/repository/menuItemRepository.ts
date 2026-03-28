@@ -47,6 +47,9 @@ export const menuItemRepository = {
          include: [{ model: MenuCategory, as: 'category' }],
       }),
 
+   findManyByIds: (ids: string[], transaction?: Transaction) =>
+      MenuItem.findAll({ where: { id: ids }, transaction }),
+
    findByIdForUpdate: (id: string, transaction: Transaction) =>
       MenuItem.findByPk(id, { lock: true, transaction }),
 

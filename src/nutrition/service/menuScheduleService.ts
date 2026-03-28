@@ -13,8 +13,8 @@ import { redisClient } from '../../../shared/config/redis';
 const MENU_CACHE_PREFIX = 'foodtech:menu:';
 const ADDONS_CACHE_KEY = 'foodtech:addons';
 const FILTERS_CACHE_KEY = 'foodtech:filters';
-const MENU_CACHE_TTL = 300;    // 5 минут
-const ADDONS_CACHE_TTL = 600;  // 10 минут
+const MENU_CACHE_TTL = 300; // 5 минут
+const ADDONS_CACHE_TTL = 600; // 10 минут
 const FILTERS_CACHE_TTL = 600; // 10 минут
 
 function getMenuCacheKey(startDate: string, days: number): string {
@@ -123,7 +123,7 @@ export const menuScheduleService = {
    async getWeeklyMenu(
       startDate: string,
       days: number = 7,
-      excludeAllergens: string[] = []
+      excludeAllergens: string[] = [],
    ): Promise<WeeklyMenu> {
       const start = new Date(startDate);
       const end = new Date(start);
@@ -150,7 +150,10 @@ export const menuScheduleService = {
       ]);
 
       // 4. Применяем фильтры аллергенов
-      const filteredDays = this.applyAllergenFilters(baseMenu.days, excludeAllergens);
+      const filteredDays = this.applyAllergenFilters(
+         baseMenu.days,
+         excludeAllergens,
+      );
 
       // 5. Добавляем свежие слоты в каждый день
       for (const day of filteredDays) {
@@ -169,11 +172,15 @@ export const menuScheduleService = {
    /**
     * Получить кэшированное базовое меню (без slot data)
     */
-   async getCachedBaseMenu(cacheKey: string): Promise<{ days: MenuDay[] } | null> {
+   async getCachedBaseMenu(
+      cacheKey: string,
+   ): Promise<{ days: MenuDay[] } | null> {
       try {
          const cached = await redisClient.get(cacheKey);
          if (cached) {
-            return JSON.parse(typeof cached === 'string' ? cached : cached.toString());
+            return JSON.parse(
+               typeof cached === 'string' ? cached : cached.toString(),
+            );
          }
       } catch (e) {
          console.error('Menu cache read error:', e);
@@ -184,9 +191,16 @@ export const menuScheduleService = {
    /**
     * Кэшировать базовое меню
     */
-   async cacheBaseMenu(cacheKey: string, data: { days: MenuDay[] }): Promise<void> {
+   async cacheBaseMenu(
+      cacheKey: string,
+      data: { days: MenuDay[] },
+   ): Promise<void> {
       try {
-         await redisClient.setEx(cacheKey, MENU_CACHE_TTL, JSON.stringify(data));
+         await redisClient.setEx(
+            cacheKey,
+            MENU_CACHE_TTL,
+            JSON.stringify(data),
+         );
       } catch (e) {
          console.error('Menu cache write error:', e);
       }
@@ -199,7 +213,7 @@ export const menuScheduleService = {
       startDate: string,
       endDateStr: string,
       days: number,
-      start: Date
+      start: Date,
    ): Promise<{ days: MenuDay[] }> {
       const schedules = await MenuSchedule.findAll({
          where: {
@@ -248,9 +262,10 @@ export const menuScheduleService = {
 
       // Распределяем блюда
       for (const schedule of schedules) {
-         const dateStr = typeof schedule.scheduleDate === 'string'
-            ? schedule.scheduleDate
-            : (schedule.scheduleDate as Date).toISOString().split('T')[0];
+         const dateStr =
+            typeof schedule.scheduleDate === 'string'
+               ? schedule.scheduleDate
+               : (schedule.scheduleDate as Date).toISOString().split('T')[0];
 
          const day = daysMap.get(dateStr);
          if (!day || !schedule.dish) continue;
@@ -274,15 +289,16 @@ export const menuScheduleService = {
                weightGrams: dish.weightGrams,
                priceTiyin: Number(dish.priceTiyin),
                ingredients: dish.ingredients,
-               tags: dishTags.map(t => ({
+               tags: dishTags.map((t) => ({
                   slug: t.slug,
                   name: t.name,
                   type: t.type,
                })),
             },
-            effectivePriceTiyin: schedule.overridePriceTiyin !== null
-               ? Number(schedule.overridePriceTiyin)
-               : Number(dish.priceTiyin),
+            effectivePriceTiyin:
+               schedule.overridePriceTiyin !== null
+                  ? Number(schedule.overridePriceTiyin)
+                  : Number(dish.priceTiyin),
             remainingPortions: schedule.getRemainingPortions(),
             isAvailable: schedule.hasCapacity(),
             isExcludedByFilter: false, // Будет установлено при применении фильтра
@@ -298,7 +314,10 @@ export const menuScheduleService = {
    /**
     * Загрузить свежие слоты (не кэшируются - capacity меняется)
     */
-   async loadFreshSlots(startDate: string, endDateStr: string): Promise<Map<string, MenuDay['slots']>> {
+   async loadFreshSlots(
+      startDate: string,
+      endDateStr: string,
+   ): Promise<Map<string, MenuDay['slots']>> {
       const slots = await DeliverySlot.findAll({
          where: {
             deliveryDate: {
@@ -306,15 +325,21 @@ export const menuScheduleService = {
             },
             isActive: true,
          },
-         order: [['deliveryDate', 'ASC'], ['timeStart', 'ASC']],
+         order: [
+            ['deliveryDate', 'ASC'],
+            ['timeStart', 'ASC'],
+         ],
       });
 
       const slotsMap = new Map<string, MenuDay['slots']>();
 
       for (const slot of slots) {
-         const dateStr = typeof slot.deliveryDate === 'string'
-            ? slot.deliveryDate
-            : (slot.deliveryDate as unknown as Date).toISOString().split('T')[0];
+         const dateStr =
+            typeof slot.deliveryDate === 'string'
+               ? slot.deliveryDate
+               : (slot.deliveryDate as unknown as Date)
+                    .toISOString()
+                    .split('T')[0];
 
          if (!slotsMap.has(dateStr)) {
             slotsMap.set(dateStr, []);
@@ -342,7 +367,9 @@ export const menuScheduleService = {
       try {
          const cached = await redisClient.get(ADDONS_CACHE_KEY);
          if (cached) {
-            return JSON.parse(typeof cached === 'string' ? cached : cached.toString());
+            return JSON.parse(
+               typeof cached === 'string' ? cached : cached.toString(),
+            );
          }
       } catch (e) {
          console.error('Addons cache read error:', e);
@@ -354,7 +381,7 @@ export const menuScheduleService = {
          order: [['sortOrder', 'ASC']],
       });
 
-      const result = addons.map(a => ({
+      const result = addons.map((a) => ({
          id: a.id,
          name: a.name,
          description: a.description,
@@ -370,7 +397,11 @@ export const menuScheduleService = {
 
       // Кэшируем
       try {
-         await redisClient.setEx(ADDONS_CACHE_KEY, ADDONS_CACHE_TTL, JSON.stringify(result));
+         await redisClient.setEx(
+            ADDONS_CACHE_KEY,
+            ADDONS_CACHE_TTL,
+            JSON.stringify(result),
+         );
       } catch (e) {
          console.error('Addons cache write error:', e);
       }
@@ -385,7 +416,9 @@ export const menuScheduleService = {
       try {
          const cached = await redisClient.get(FILTERS_CACHE_KEY);
          if (cached) {
-            return JSON.parse(typeof cached === 'string' ? cached : cached.toString());
+            return JSON.parse(
+               typeof cached === 'string' ? cached : cached.toString(),
+            );
          }
       } catch (e) {
          console.error('Filters cache read error:', e);
@@ -400,7 +433,7 @@ export const menuScheduleService = {
          order: [['sortOrder', 'ASC']],
       });
 
-      const result = filters.map(f => ({
+      const result = filters.map((f) => ({
          slug: f.slug,
          name: f.name,
          type: f.type,
@@ -409,7 +442,11 @@ export const menuScheduleService = {
 
       // Кэшируем
       try {
-         await redisClient.setEx(FILTERS_CACHE_KEY, FILTERS_CACHE_TTL, JSON.stringify(result));
+         await redisClient.setEx(
+            FILTERS_CACHE_KEY,
+            FILTERS_CACHE_TTL,
+            JSON.stringify(result),
+         );
       } catch (e) {
          console.error('Filters cache write error:', e);
       }
@@ -420,12 +457,15 @@ export const menuScheduleService = {
    /**
     * Применить фильтры аллергенов к дням меню
     */
-   applyAllergenFilters(days: MenuDay[], excludeAllergens: string[]): MenuDay[] {
+   applyAllergenFilters(
+      days: MenuDay[],
+      excludeAllergens: string[],
+   ): MenuDay[] {
       if (excludeAllergens.length === 0) {
          return days;
       }
 
-      return days.map(day => ({
+      return days.map((day) => ({
          ...day,
          meals: {
             breakfast: this.filterMeals(day.meals.breakfast, excludeAllergens),
@@ -439,11 +479,18 @@ export const menuScheduleService = {
    /**
     * Пометить блюда включёнными фильтром
     */
-   filterMeals(meals: MenuDayItem[], excludeAllergens: string[]): MenuDayItem[] {
-      return meals.map(meal => {
+   filterMeals(
+      meals: MenuDayItem[],
+      excludeAllergens: string[],
+   ): MenuDayItem[] {
+      return meals.map((meal) => {
          const matchedAllergens = meal.dish.tags
-            .filter(tag => tag.type === 'allergen' && excludeAllergens.includes(tag.slug))
-            .map(tag => tag.slug);
+            .filter(
+               (tag) =>
+                  tag.type === 'allergen' &&
+                  excludeAllergens.includes(tag.slug),
+            )
+            .map((tag) => tag.slug);
 
          return {
             ...meal,
@@ -458,12 +505,24 @@ export const menuScheduleService = {
     */
    async invalidateMenuCache(): Promise<void> {
       try {
-         // Используем keys() как в остальном проекте
-         const keys = await redisClient.keys(`${MENU_CACHE_PREFIX}*`);
-         if (keys && keys.length > 0) {
-            await redisClient.del(keys);
-            console.log(`Invalidated ${keys.length} menu cache keys`);
+         // SCAN вместо KEYS — не блокирует Redis под нагрузкой
+         let count = 0;
+         const keysToDelete: string[] = [];
+         for await (const keys of redisClient.scanIterator({
+            MATCH: `${MENU_CACHE_PREFIX}*`,
+            COUNT: 100,
+         })) {
+            if (Array.isArray(keys)) {
+               keysToDelete.push(...(keys as string[]));
+            } else {
+               keysToDelete.push(keys as string);
+            }
          }
+         if (keysToDelete.length > 0) {
+            await redisClient.del(keysToDelete);
+            count = keysToDelete.length;
+         }
+         console.log(`Invalidated ${count} menu cache keys`);
       } catch (e) {
          console.error('Menu cache invalidation error:', e);
       }
@@ -496,7 +555,7 @@ export const menuScheduleService = {
     */
    async getDayMenu(
       date: string,
-      excludeAllergens: string[] = []
+      excludeAllergens: string[] = [],
    ): Promise<MenuDay | null> {
       const menu = await this.getWeeklyMenu(date, 1, excludeAllergens);
       return menu.days[0] || null;
@@ -507,7 +566,20 @@ export const menuScheduleService = {
     */
    formatDate(date: Date): string {
       const days = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
-      const months = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+      const months = [
+         'янв',
+         'фев',
+         'мар',
+         'апр',
+         'май',
+         'июн',
+         'июл',
+         'авг',
+         'сен',
+         'окт',
+         'ноя',
+         'дек',
+      ];
 
       return `${days[date.getDay()]}, ${date.getDate()} ${months[date.getMonth()]}`;
    },
@@ -542,9 +614,11 @@ export const menuScheduleService = {
          order: [['scheduleDate', 'ASC']],
       });
 
-      return schedules.map(s => {
+      return schedules.map((s) => {
          const date = s.scheduleDate;
-         return typeof date === 'string' ? date : (date as Date).toISOString().split('T')[0];
+         return typeof date === 'string'
+            ? date
+            : (date as Date).toISOString().split('T')[0];
       });
    },
 
@@ -553,8 +627,12 @@ export const menuScheduleService = {
     */
    async checkDishAvailability(
       dishId: string,
-      date: string
-   ): Promise<{ available: boolean; scheduleId?: string; remainingPortions?: number | null }> {
+      date: string,
+   ): Promise<{
+      available: boolean;
+      scheduleId?: string;
+      remainingPortions?: number | null;
+   }> {
       const schedule = await MenuSchedule.findOne({
          where: {
             dishId,

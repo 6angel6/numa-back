@@ -8,6 +8,7 @@ import paymentRouter    from './payment/paymentRouter';
 import blogRouter       from './blog/blogRouter';
 import restaurantRouter from './restaurant/restaurantRouter';
 import nutritionRouter  from './nutrition/nutritionRouter';
+import siteRouter      from './site/siteRouter';
 
 const router = express.Router();
 
@@ -20,5 +21,6 @@ router.use('/payment',    paymentRouter);
 router.use('/blog',       blogRouter);
 router.use('/restaurant', restaurantRouter);
 router.use('/nutrition',  nutritionRouter);
+router.use('/sites',      siteRouter);
 
 export default router;

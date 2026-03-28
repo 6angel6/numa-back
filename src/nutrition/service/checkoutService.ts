@@ -1,4 +1,4 @@
-      import { db } from '../../../shared/config/database';
+import { db } from '../../../shared/config/database';
 import { BadRequestError } from '../../../shared/utils/errors';
 import { calendarCartService } from './cartService';
 import { menuScheduleService } from './menuScheduleService';
@@ -12,9 +12,10 @@ import { Addon } from '../model/Addon';
 import { DeliverySlot } from '../model/DeliverySlot';
 import { MenuSchedule } from '../model/MenuSchedule';
 import { RedisCalendarCart, CartDay } from '../types/redisCart';
-import { Transaction } from 'sequelize';
+import { Op, Transaction } from 'sequelize';
 import Payment, { PaymentProvider } from '../../payment/model/Payment';
 import { StoreSlug } from '../../types';
+import { SubscriptionPlan } from '../model/SubscriptionPlan';
 
 // Timezone для Узбекистана
 const TIMEZONE_OFFSET = '+05:00';
@@ -60,7 +61,9 @@ export const calendarCheckoutService = {
     * 8. Создаём Payment
     * 9. Очищаем корзину
     */
-   async checkout(input: CalendarCheckoutInput): Promise<CalendarCheckoutResult> {
+   async checkout(
+      input: CalendarCheckoutInput,
+   ): Promise<CalendarCheckoutResult> {
       // 1. Получаем корзину
       const cart = await calendarCartService.getCart(input.sessionToken);
 
@@ -69,9 +72,25 @@ export const calendarCheckoutService = {
       }
 
       // Filter out empty days
-      const nonEmptyDays = cart.days.filter(day => this.isDayNotEmpty(day));
+      const nonEmptyDays = cart.days.filter((day) => this.isDayNotEmpty(day));
       if (nonEmptyDays.length === 0) {
          throw new BadRequestError('No items in cart');
+      }
+
+      // Загружаем подписочный план (если выбран)
+      let plan: SubscriptionPlan | null = null;
+      if (cart.planId) {
+         plan = await SubscriptionPlan.findByPk(cart.planId);
+         if (!plan || !plan.isActive) {
+            throw new BadRequestError(
+               'Selected subscription plan is not available',
+            );
+         }
+         if (nonEmptyDays.length !== plan.daysCount) {
+            throw new BadRequestError(
+               `Plan "${plan.slug}" requires exactly ${plan.daysCount} days, but cart has ${nonEmptyDays.length}`,
+            );
+         }
       }
 
       // 2. Предварительная валидация (без блокировки)
@@ -84,19 +103,32 @@ export const calendarCheckoutService = {
       const enrichmentData = await this.loadEnrichmentData(nonEmptyDays);
 
       // 4. Создаём заказ в транзакции с SELECT FOR UPDATE
-      return db.transaction(async (t) => {
+      const result = await db.transaction(async (t) => {
          // 4.1 КРИТИЧНО: Блокируем и проверяем слоты внутри транзакции
          const lockedSlots = await this.lockAndValidateSlots(nonEmptyDays, t);
 
          // 4.2 Рассчитываем итоги
-         const totals = this.calculateTotals(nonEmptyDays, enrichmentData, lockedSlots);
+         const totals = this.calculateTotals(
+            nonEmptyDays,
+            enrichmentData,
+            lockedSlots,
+         );
 
-         // 4.3 Проверяем минимальную сумму заказа
-         if (totals.totalTiyin < MIN_ORDER_AMOUNT_TIYIN) {
+         // 4.2.1 Применяем скидку подписочного плана
+         const discountTiyin = plan
+            ? Math.round(
+                 (totals.subtotalTiyin * Number(plan.discountPercent)) / 100,
+              )
+            : 0;
+         const finalTotalTiyin =
+            totals.subtotalTiyin + totals.deliveryFeeTiyin - discountTiyin;
+
+         // 4.3 Проверяем минимальную сумму заказа (после скидки)
+         if (finalTotalTiyin < MIN_ORDER_AMOUNT_TIYIN) {
             const minAmountUzs = MIN_ORDER_AMOUNT_TIYIN / 100;
-            const currentAmountUzs = totals.totalTiyin / 100;
+            const currentAmountUzs = finalTotalTiyin / 100;
             throw new BadRequestError(
-               `Minimum order amount is ${minAmountUzs.toLocaleString('ru-UZ')} UZS. Current total: ${currentAmountUzs.toLocaleString('ru-UZ')} UZS`
+               `Minimum order amount is ${minAmountUzs.toLocaleString('ru-UZ')} UZS. Current total: ${currentAmountUzs.toLocaleString('ru-UZ')} UZS`,
             );
          }
 
@@ -114,22 +146,35 @@ export const calendarCheckoutService = {
                status: 'pending',
                subtotalTiyin: totals.subtotalTiyin,
                deliveryFeeTiyin: totals.deliveryFeeTiyin,
-               discountTiyin: 0,
-               totalTiyin: totals.totalTiyin,
+               discountTiyin,
+               totalTiyin: finalTotalTiyin,
                totalCalories: totals.totalCalories,
                totalProteins: totals.totalProteins,
                totalFats: totals.totalFats,
                totalCarbs: totals.totalCarbs,
                paymentMethod: input.paymentMethod,
                excludedAllergens: cart.preferences.excludeAllergens,
+               // Snapshot подписочного плана
+               subscriptionPlanId: plan?.id ?? null,
+               snapshotPlanName: plan?.name ?? null,
+               snapshotPlanDaysCount: plan?.daysCount ?? null,
+               snapshotPlanDiscountPercent: plan
+                  ? Number(plan.discountPercent)
+                  : null,
             },
-            { transaction: t }
+            { transaction: t },
          );
 
          // 4.5 Создаём OrderDays и OrderItems
          for (const cartDay of nonEmptyDays) {
-            const dayTotals = this.calculateDayTotals(cartDay, enrichmentData, lockedSlots);
-            const slot = cartDay.deliverySlotId ? lockedSlots.get(cartDay.deliverySlotId) : null;
+            const dayTotals = this.calculateDayTotals(
+               cartDay,
+               enrichmentData,
+               lockedSlots,
+            );
+            const slot = cartDay.deliverySlotId
+               ? lockedSlots.get(cartDay.deliverySlotId)
+               : null;
 
             const orderDay = await NutritionOrderDay.create(
                {
@@ -138,19 +183,27 @@ export const calendarCheckoutService = {
                   // Новые поля для слота
                   deliverySlotId: cartDay.deliverySlotId ?? null,
                   snapshotSlotTime: slot ? slot.getTimeRange() : null,
-                  snapshotDeliveryFeeTiyin: slot ? Number(slot.deliveryFeeTiyin) : 0,
+                  snapshotDeliveryFeeTiyin: slot
+                     ? Number(slot.deliveryFeeTiyin)
+                     : 0,
                   // КБЖУ
                   dayCalories: dayTotals.calories,
                   dayProteins: dayTotals.proteins,
                   dayFats: dayTotals.fats,
                   dayCarbs: dayTotals.carbs,
-                  dayTotalTiyin: dayTotals.subtotalTiyin + dayTotals.deliveryFeeTiyin,
+                  dayTotalTiyin:
+                     dayTotals.subtotalTiyin + dayTotals.deliveryFeeTiyin,
                },
-               { transaction: t }
+               { transaction: t },
             );
 
             // Create order items for meals
-            const mealTypes: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack'];
+            const mealTypes: MealType[] = [
+               'breakfast',
+               'lunch',
+               'dinner',
+               'snack',
+            ];
             for (const mealType of mealTypes) {
                const meal = cartDay.meals[mealType];
                if (!meal) continue;
@@ -159,7 +212,8 @@ export const calendarCheckoutService = {
                if (!dish) continue;
 
                const schedule = enrichmentData.schedules.get(meal.scheduleId);
-               const effectivePrice = schedule?.overridePriceTiyin ?? Number(dish.priceTiyin);
+               const effectivePrice =
+                  schedule?.overridePriceTiyin ?? Number(dish.priceTiyin);
 
                await NutritionOrderItem.create(
                   {
@@ -177,16 +231,37 @@ export const calendarCheckoutService = {
                      quantity: meal.quantity,
                      lineTotalTiyin: effectivePrice * meal.quantity,
                   },
-                  { transaction: t }
+                  { transaction: t },
                );
 
-               // Update portions_sold
+               // Update portions_sold atomically with portion limit check
                if (schedule) {
-                  await MenuSchedule.increment('portionsSold', {
-                     by: meal.quantity,
-                     where: { id: schedule.id },
-                     transaction: t,
-                  });
+                  const [updatedCount] = await MenuSchedule.update(
+                     {
+                        portionsSold: db.literal(
+                           `portions_sold + ${meal.quantity}`,
+                        ),
+                     },
+                     {
+                        where: {
+                           id: schedule.id,
+                           // Atomic check: cannot exceed max_portions
+                           [Op.or]: [
+                              { maxPortions: null },
+                              db.literal(
+                                 `portions_sold + ${meal.quantity} <= max_portions`,
+                              ),
+                           ],
+                        },
+                        transaction: t,
+                     },
+                  );
+
+                  if (updatedCount === 0) {
+                     throw new BadRequestError(
+                        `Dish "${dish.name.ru}" for ${mealType} on ${cartDay.date} is sold out`,
+                     );
+                  }
                }
             }
 
@@ -209,9 +284,10 @@ export const calendarCheckoutService = {
                      snapshotCarbs: Number(addon.carbs),
                      snapshotPriceTiyin: Number(addon.priceTiyin),
                      quantity: cartAddon.quantity,
-                     lineTotalTiyin: Number(addon.priceTiyin) * cartAddon.quantity,
+                     lineTotalTiyin:
+                        Number(addon.priceTiyin) * cartAddon.quantity,
                   },
-                  { transaction: t }
+                  { transaction: t },
                );
             }
 
@@ -221,34 +297,44 @@ export const calendarCheckoutService = {
             }
          }
 
-         // 5. Очищаем корзину
-         await calendarCartService.clearCart(input.sessionToken);
-
-         // 6. Create Payment record for online payments
+         // 5. Create Payment record for online payments
          if (input.paymentMethod !== 'cash') {
             await Payment.create(
                {
                   nutritionOrderId: order.id,
                   store: StoreSlug.NUTRITION,
-                  provider: input.paymentMethod === 'click' ? PaymentProvider.CLICK : PaymentProvider.PAYME,
+                  provider:
+                     input.paymentMethod === 'click'
+                        ? PaymentProvider.CLICK
+                        : PaymentProvider.PAYME,
                   amountTiyin: totals.totalTiyin,
                },
                { transaction: t },
             );
          }
 
-         // 7. Payment URL (если онлайн оплата)
+         // 6. Payment URL (если онлайн оплата)
          let paymentUrl: string | undefined;
-         if (input.paymentMethod === 'click' || input.paymentMethod === 'payme') {
+         if (
+            input.paymentMethod === 'click' ||
+            input.paymentMethod === 'payme'
+         ) {
             paymentUrl = this.generatePaymentUrl(
                input.paymentMethod,
                order.id,
-               totals.totalTiyin
+               finalTotalTiyin,
             );
          }
 
          return { order, paymentUrl };
       });
+
+      // 7. Очищаем корзину ПОСЛЕ успешного коммита транзакции.
+      // Redis не участвует в PG-транзакции: если clearCart вызвать внутри,
+      // при откате PG корзина всё равно удалится — заказа нет, а корзина потеряна.
+      await calendarCartService.clearCart(input.sessionToken);
+
+      return result;
    },
 
    /**
@@ -257,10 +343,10 @@ export const calendarCheckoutService = {
     */
    async lockAndValidateSlots(
       days: CartDay[],
-      transaction: Transaction
+      transaction: Transaction,
    ): Promise<Map<string, DeliverySlot>> {
       const slotIds = days
-         .map(d => d.deliverySlotId)
+         .map((d) => d.deliverySlotId)
          .filter((id): id is string => id !== null);
 
       if (slotIds.length === 0) {
@@ -283,7 +369,7 @@ export const calendarCheckoutService = {
             continue;
          }
 
-         const slot = slots.find(s => s.id === day.deliverySlotId);
+         const slot = slots.find((s) => s.id === day.deliverySlotId);
          if (!slot) {
             errors.push(`Slot not found for ${day.date}`);
             continue;
@@ -306,10 +392,9 @@ export const calendarCheckoutService = {
       return slotMap;
    },
 
-
    async validateCart(
       cart: RedisCalendarCart,
-      days: CartDay[]
+      days: CartDay[],
    ): Promise<{ isValid: boolean; errors: string[] }> {
       const errors: string[] = [];
 
@@ -335,14 +420,21 @@ export const calendarCheckoutService = {
          }
 
          // Check meals availability and price changes
-         const mealTypes: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack'];
+         const mealTypes: MealType[] = [
+            'breakfast',
+            'lunch',
+            'dinner',
+            'snack',
+         ];
          for (const mealType of mealTypes) {
             const meal = day.meals[mealType];
             if (!meal) continue;
 
             const schedule = validationData.schedules.get(meal.scheduleId);
             if (!schedule || !schedule.isAvailable) {
-               errors.push(`Meal ${mealType} for ${day.date} is no longer available`);
+               errors.push(
+                  `Meal ${mealType} for ${day.date} is no longer available`,
+               );
                continue;
             }
 
@@ -354,12 +446,13 @@ export const calendarCheckoutService = {
             // Проверка изменения цены
             const dish = validationData.dishes.get(meal.dishId);
             if (dish) {
-               const currentPrice = schedule.overridePriceTiyin ?? Number(dish.priceTiyin);
+               const currentPrice =
+                  schedule.overridePriceTiyin ?? Number(dish.priceTiyin);
                if (meal.priceTiyinSnapshot !== currentPrice) {
                   const oldPrice = (meal.priceTiyinSnapshot / 100).toFixed(0);
                   const newPrice = (currentPrice / 100).toFixed(0);
                   errors.push(
-                     `Price changed for ${mealType} on ${day.date}: was ${oldPrice} UZS, now ${newPrice} UZS`
+                     `Price changed for ${mealType} on ${day.date}: was ${oldPrice} UZS, now ${newPrice} UZS`,
                   );
                }
             }
@@ -369,7 +462,9 @@ export const calendarCheckoutService = {
          for (const cartAddon of day.addons) {
             const addon = validationData.addons.get(cartAddon.addonId);
             if (!addon || !addon.isActive) {
-               errors.push(`Addon ${cartAddon.addonId} for ${day.date} is no longer available`);
+               errors.push(
+                  `Addon ${cartAddon.addonId} for ${day.date} is no longer available`,
+               );
                continue;
             }
 
@@ -378,7 +473,7 @@ export const calendarCheckoutService = {
                const oldPrice = (cartAddon.priceTiyinSnapshot / 100).toFixed(0);
                const newPrice = (currentPrice / 100).toFixed(0);
                errors.push(
-                  `Addon price changed on ${day.date}: was ${oldPrice} UZS, now ${newPrice} UZS`
+                  `Addon price changed on ${day.date}: was ${oldPrice} UZS, now ${newPrice} UZS`,
                );
             }
          }
@@ -408,7 +503,12 @@ export const calendarCheckoutService = {
       for (const day of days) {
          if (day.deliverySlotId) slotIds.add(day.deliverySlotId);
 
-         const mealTypes: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack'];
+         const mealTypes: MealType[] = [
+            'breakfast',
+            'lunch',
+            'dinner',
+            'snack',
+         ];
          for (const mealType of mealTypes) {
             const meal = day.meals[mealType];
             if (meal) {
@@ -423,18 +523,22 @@ export const calendarCheckoutService = {
       }
 
       // Загружаем ВСЁ параллельно (4 запроса вместо N)
-      const slotsPromise = slotIds.size > 0
-         ? DeliverySlot.findAll({ where: { id: Array.from(slotIds) } })
-         : Promise.resolve([] as DeliverySlot[]);
-      const schedulesPromise = scheduleIds.size > 0
-         ? MenuSchedule.findAll({ where: { id: Array.from(scheduleIds) } })
-         : Promise.resolve([] as MenuSchedule[]);
-      const dishesPromise = dishIds.size > 0
-         ? Dish.findAll({ where: { id: Array.from(dishIds) } })
-         : Promise.resolve([] as Dish[]);
-      const addonsPromise = addonIds.size > 0
-         ? Addon.findAll({ where: { id: Array.from(addonIds) } })
-         : Promise.resolve([] as Addon[]);
+      const slotsPromise =
+         slotIds.size > 0
+            ? DeliverySlot.findAll({ where: { id: Array.from(slotIds) } })
+            : Promise.resolve([] as DeliverySlot[]);
+      const schedulesPromise =
+         scheduleIds.size > 0
+            ? MenuSchedule.findAll({ where: { id: Array.from(scheduleIds) } })
+            : Promise.resolve([] as MenuSchedule[]);
+      const dishesPromise =
+         dishIds.size > 0
+            ? Dish.findAll({ where: { id: Array.from(dishIds) } })
+            : Promise.resolve([] as Dish[]);
+      const addonsPromise =
+         addonIds.size > 0
+            ? Addon.findAll({ where: { id: Array.from(addonIds) } })
+            : Promise.resolve([] as Addon[]);
 
       const [slots, schedules, dishes, addons] = await Promise.all([
          slotsPromise,
@@ -444,10 +548,12 @@ export const calendarCheckoutService = {
       ]);
 
       return {
-         slots: new Map<string, DeliverySlot>(slots.map(s => [s.id, s])),
-         schedules: new Map<string, MenuSchedule>(schedules.map(s => [s.id, s])),
-         dishes: new Map<string, Dish>(dishes.map(d => [d.id, d])),
-         addons: new Map<string, Addon>(addons.map(a => [a.id, a])),
+         slots: new Map<string, DeliverySlot>(slots.map((s) => [s.id, s])),
+         schedules: new Map<string, MenuSchedule>(
+            schedules.map((s) => [s.id, s]),
+         ),
+         dishes: new Map<string, Dish>(dishes.map((d) => [d.id, d])),
+         addons: new Map<string, Addon>(addons.map((a) => [a.id, a])),
       };
    },
 
@@ -470,7 +576,12 @@ export const calendarCheckoutService = {
       for (const day of days) {
          if (day.deliverySlotId) slotIds.add(day.deliverySlotId);
 
-         const mealTypes: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack'];
+         const mealTypes: MealType[] = [
+            'breakfast',
+            'lunch',
+            'dinner',
+            'snack',
+         ];
          for (const mealType of mealTypes) {
             const meal = day.meals[mealType];
             if (meal) {
@@ -485,18 +596,22 @@ export const calendarCheckoutService = {
       }
 
       // Load all data in parallel
-      const dishesPromise = dishIds.size > 0
-         ? Dish.findAll({ where: { id: Array.from(dishIds) } })
-         : Promise.resolve([] as Dish[]);
-      const addonsPromise = addonIds.size > 0
-         ? Addon.findAll({ where: { id: Array.from(addonIds) } })
-         : Promise.resolve([] as Addon[]);
-      const schedulesPromise = scheduleIds.size > 0
-         ? MenuSchedule.findAll({ where: { id: Array.from(scheduleIds) } })
-         : Promise.resolve([] as MenuSchedule[]);
-      const slotsPromise = slotIds.size > 0
-         ? DeliverySlot.findAll({ where: { id: Array.from(slotIds) } })
-         : Promise.resolve([] as DeliverySlot[]);
+      const dishesPromise =
+         dishIds.size > 0
+            ? Dish.findAll({ where: { id: Array.from(dishIds) } })
+            : Promise.resolve([] as Dish[]);
+      const addonsPromise =
+         addonIds.size > 0
+            ? Addon.findAll({ where: { id: Array.from(addonIds) } })
+            : Promise.resolve([] as Addon[]);
+      const schedulesPromise =
+         scheduleIds.size > 0
+            ? MenuSchedule.findAll({ where: { id: Array.from(scheduleIds) } })
+            : Promise.resolve([] as MenuSchedule[]);
+      const slotsPromise =
+         slotIds.size > 0
+            ? DeliverySlot.findAll({ where: { id: Array.from(slotIds) } })
+            : Promise.resolve([] as DeliverySlot[]);
 
       const [dishes, addons, schedules, slots] = await Promise.all([
          dishesPromise,
@@ -510,10 +625,10 @@ export const calendarCheckoutService = {
       const scheduleMap = new Map<string, MenuSchedule>();
       const slotMap = new Map<string, DeliverySlot>();
 
-      dishes.forEach(d => dishMap.set(d.id, d));
-      addons.forEach(a => addonMap.set(a.id, a));
-      schedules.forEach(s => scheduleMap.set(s.id, s));
-      slots.forEach(s => slotMap.set(s.id, s));
+      dishes.forEach((d) => dishMap.set(d.id, d));
+      addons.forEach((a) => addonMap.set(a.id, a));
+      schedules.forEach((s) => scheduleMap.set(s.id, s));
+      slots.forEach((s) => slotMap.set(s.id, s));
 
       return {
          dishes: dishMap,
@@ -530,7 +645,7 @@ export const calendarCheckoutService = {
    calculateDayTotals(
       day: CartDay,
       data: Awaited<ReturnType<typeof this.loadEnrichmentData>>,
-      lockedSlots?: Map<string, DeliverySlot>
+      lockedSlots?: Map<string, DeliverySlot>,
    ) {
       let calories = 0;
       let proteins = 0;
@@ -547,7 +662,8 @@ export const calendarCheckoutService = {
          if (!dish) continue;
 
          const schedule = data.schedules.get(meal.scheduleId);
-         const effectivePrice = schedule?.overridePriceTiyin ?? Number(dish.priceTiyin);
+         const effectivePrice =
+            schedule?.overridePriceTiyin ?? Number(dish.priceTiyin);
 
          const qty = meal.quantity;
          calories += dish.calories * qty;
@@ -572,7 +688,9 @@ export const calendarCheckoutService = {
       // Используем заблокированные слоты если есть, иначе из enrichmentData
       let slot: DeliverySlot | null | undefined = null;
       if (day.deliverySlotId) {
-         slot = lockedSlots?.get(day.deliverySlotId) ?? data.slots.get(day.deliverySlotId);
+         slot =
+            lockedSlots?.get(day.deliverySlotId) ??
+            data.slots.get(day.deliverySlotId);
       }
       const deliveryFeeTiyin = slot ? Number(slot.deliveryFeeTiyin) : 0;
 
@@ -589,7 +707,7 @@ export const calendarCheckoutService = {
    calculateTotals(
       days: CartDay[],
       data: Awaited<ReturnType<typeof this.loadEnrichmentData>>,
-      lockedSlots?: Map<string, DeliverySlot>
+      lockedSlots?: Map<string, DeliverySlot>,
    ) {
       let totalCalories = 0;
       let totalProteins = 0;
@@ -624,7 +742,7 @@ export const calendarCheckoutService = {
    // ═══════════════════════════════════════════════════════════════════════
 
    isDayNotEmpty(day: CartDay): boolean {
-      const hasMeals = Object.values(day.meals).some(m => m !== null);
+      const hasMeals = Object.values(day.meals).some((m) => m !== null);
       const hasAddons = day.addons.length > 0;
       return hasMeals || hasAddons;
    },
@@ -632,7 +750,7 @@ export const calendarCheckoutService = {
    generatePaymentUrl(
       provider: 'click' | 'payme',
       orderId: string,
-      amount: number
+      amount: number,
    ): string {
       const baseUrl = process.env.APP_URL || 'https://numa.uz';
 
@@ -650,7 +768,7 @@ export const calendarCheckoutService = {
                ac: { nutrition_order: orderId },
                a: amount,
                c: `${baseUrl}/payment/success`,
-            })
+            }),
          ).toString('base64');
          return `https://checkout.paycom.uz/${params}`;
       }

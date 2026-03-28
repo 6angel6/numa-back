@@ -4,10 +4,14 @@ import { Dish, initDish } from './Dish';
 import { Addon, initAddon } from './Addon';
 import { MenuSchedule, initMenuSchedule } from './MenuSchedule';
 import { DeliverySlot, initDeliverySlot } from './DeliverySlot';
+import { SubscriptionPlan, initSubscriptionPlan } from './SubscriptionPlan';
 import {
-   NutritionOrder, initNutritionOrder,
-   NutritionOrderDay, initNutritionOrderDay,
-   NutritionOrderItem, initNutritionOrderItem,
+   NutritionOrder,
+   initNutritionOrder,
+   NutritionOrderDay,
+   initNutritionOrderDay,
+   NutritionOrderItem,
+   initNutritionOrderItem,
 } from './NutritionOrder';
 
 // DishTag junction model (no separate class needed, just define relationship)
@@ -20,6 +24,7 @@ export function initNutritionModels(sequelize: Sequelize) {
    initAddon(sequelize);
    initMenuSchedule(sequelize);
    initDeliverySlot(sequelize);
+   initSubscriptionPlan(sequelize);
    initNutritionOrder(sequelize);
    initNutritionOrderDay(sequelize);
    initNutritionOrderItem(sequelize);
@@ -111,6 +116,20 @@ export function initNutritionModels(sequelize: Sequelize) {
       foreignKey: 'addonId',
       as: 'addon',
    });
+
+   // ═══════════════════════════════════════════════════════════════════════
+   // SubscriptionPlan <-> NutritionOrder
+   // ═══════════════════════════════════════════════════════════════════════
+
+   SubscriptionPlan.hasMany(NutritionOrder, {
+      foreignKey: 'subscriptionPlanId',
+      as: 'orders',
+   });
+
+   NutritionOrder.belongsTo(SubscriptionPlan, {
+      foreignKey: 'subscriptionPlanId',
+      as: 'subscriptionPlan',
+   });
 }
 
 export {
@@ -119,6 +138,7 @@ export {
    Addon,
    MenuSchedule,
    DeliverySlot,
+   SubscriptionPlan,
    NutritionOrder,
    NutritionOrderDay,
    NutritionOrderItem,

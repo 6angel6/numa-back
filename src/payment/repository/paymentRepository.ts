@@ -151,20 +151,29 @@ export const paymentRepository = {
    /**
     * GetStatement: find all Payme payments whose paymeTxTime falls in [from, to].
     * paymeTxTime is stored as a number (ms) inside the JSONB providerPayload column.
+    *
+    * Uses integer-cast sanitization before interpolation: parseInt produces only
+    * digits (or NaN), making SQL injection structurally impossible.
     */
-   findByPaymeTxTimeRange: (fromMs: number, toMs: number) =>
-      Payment.findAll({
+   findByPaymeTxTimeRange: (fromMs: number, toMs: number) => {
+      const safeFrom = parseInt(String(fromMs), 10);
+      const safeTo   = parseInt(String(toMs),   10);
+      if (isNaN(safeFrom) || isNaN(safeTo)) {
+         throw new Error('GetStatement: from/to must be numeric timestamps');
+      }
+      return Payment.findAll({
          where: {
             provider: PaymentProvider.PAYME,
             [Op.and]: [
                Sequelize.literal(
-                  `COALESCE((provider_payload->>'paymeTxTime')::bigint, 0) >= ${fromMs}`,
+                  `COALESCE((provider_payload->>'paymeTxTime')::bigint, 0) >= ${safeFrom}`,
                ),
                Sequelize.literal(
-                  `COALESCE((provider_payload->>'paymeTxTime')::bigint, 0) <= ${toMs}`,
+                  `COALESCE((provider_payload->>'paymeTxTime')::bigint, 0) <= ${safeTo}`,
                ),
             ],
          },
          order: [['createdAt', 'ASC']],
-      }),
+      });
+   },
 };

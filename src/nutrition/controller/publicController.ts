@@ -1,60 +1,46 @@
-import { Request, Response, NextFunction } from 'express';
+import { Request, Response } from 'express';
+import * as apiResponse from '../../../shared/utils/apiResponse';
+import { handleControllerError } from '../../../shared/utils/controllerErrorHandler';
 import { menuScheduleService } from '../service/menuScheduleService';
 import { calendarCartService } from '../service/cartService';
 import { calendarCheckoutService } from '../service/checkoutService';
-import { Tag } from '../model/Tag';
-import { Addon } from '../model/Addon';
+import { subscriptionPlanRepository } from '../repository/subscriptionPlanRepository';
 import { MealType } from '../model/Dish';
 
 /**
- * Public Controller для FoodTech (GrowFood-style)
+ * Public Controller for FoodTech (GrowFood-style)
  *
- * Публичные эндпоинты:
- * - Календарное меню с фильтрацией по аллергенам
- * - Корзина по дням
- * - Checkout
+ * Thin controller — delegates all business logic to services.
  */
 
 // ═══════════════════════════════════════════════════════════════════════
-// MENU (Публичное календарное меню)
+// MENU (Public calendar menu)
 // ═══════════════════════════════════════════════════════════════════════
 
 export const publicMenuController = {
-   /**
-    * GET /nutrition/menu/weekly
-    *
-    * Получить меню на неделю с мягкой фильтрацией
-    *
-    * Query params:
-    * - startDate: YYYY-MM-DD (default: завтра)
-    * - days: number (default: 7)
-    * - excludeAllergens: comma-separated slugs (fish,nuts,dairy)
-    */
-   async getWeeklyMenu(req: Request, res: Response, next: NextFunction) {
+   async getWeeklyMenu(req: Request, res: Response): Promise<void> {
       try {
-         const {
-            startDate,
-            days = 7,
-            excludeAllergens,
-         } = req.query;
+         const { startDate, days = 7, excludeAllergens } = req.query;
 
-         // Default to tomorrow
          const tomorrow = new Date();
          tomorrow.setDate(tomorrow.getDate() + 1);
          const defaultStart = tomorrow.toISOString().split('T')[0];
 
          const start = (startDate as string) || defaultStart;
-         const daysCount = Math.min(Number(days), 30); // Max 30 days
+         const daysCount = Math.min(Number(days), 30);
 
-         // Parse allergens
          const allergens = excludeAllergens
-            ? (excludeAllergens as string).split(',').map(s => s.trim())
+            ? (excludeAllergens as string).split(',').map((s) => s.trim())
             : [];
 
-         const menu = await menuScheduleService.getWeeklyMenu(start, daysCount, allergens);
+         const menu = await menuScheduleService.getWeeklyMenu(
+            start,
+            daysCount,
+            allergens,
+         );
 
-         res.json({
-            data: menu,
+         apiResponse.success(res, {
+            ...menu,
             meta: {
                startDate: menu.startDate,
                endDate: menu.endDate,
@@ -62,218 +48,161 @@ export const publicMenuController = {
                excludedAllergens: allergens,
             },
          });
-      } catch (error) {
-         next(error);
+      } catch (err) {
+         handleControllerError(res, err, { operation: 'publicGetWeeklyMenu' });
       }
    },
 
-   /**
-    * GET /nutrition/menu/day/:date
-    *
-    * Получить меню на один день
-    */
-   async getDayMenu(req: Request, res: Response, next: NextFunction) {
+   async getDayMenu(req: Request, res: Response): Promise<void> {
       try {
          const { date } = req.params;
          const { excludeAllergens } = req.query;
 
          const allergens = excludeAllergens
-            ? (excludeAllergens as string).split(',').map(s => s.trim())
+            ? (excludeAllergens as string).split(',').map((s) => s.trim())
             : [];
 
          const dayMenu = await menuScheduleService.getDayMenu(date, allergens);
 
          if (!dayMenu) {
-            return res.status(404).json({ error: 'No menu for this date' });
+            apiResponse.notFound(res, 'No menu for this date');
+            return;
          }
 
-         res.json({ data: dayMenu });
-      } catch (error) {
-         next(error);
+         apiResponse.success(res, dayMenu);
+      } catch (err) {
+         handleControllerError(res, err, { operation: 'publicGetDayMenu' });
       }
    },
 
-   /**
-    * GET /nutrition/menu/dates
-    *
-    * Получить доступные даты для заказа
-    */
-   async getAvailableDates(req: Request, res: Response, next: NextFunction) {
+   async getAvailableDates(req: Request, res: Response): Promise<void> {
       try {
          const { daysAhead = 14 } = req.query;
+         const dates = await menuScheduleService.getAvailableDates(
+            Number(daysAhead),
+         );
 
-         const dates = await menuScheduleService.getAvailableDates(Number(daysAhead));
-
-         res.json({
-            data: dates,
-            count: dates.length,
+         apiResponse.success(res, { dates, count: dates.length });
+      } catch (err) {
+         handleControllerError(res, err, {
+            operation: 'publicGetAvailableDates',
          });
-      } catch (error) {
-         next(error);
       }
    },
 
-   /**
-    * GET /nutrition/filters
-    *
-    * Получить доступные фильтры (аллергены)
-    */
-   async getFilters(req: Request, res: Response, next: NextFunction) {
+   async getFilters(req: Request, res: Response): Promise<void> {
       try {
-         const tags = await Tag.findAll({
-            where: { isActive: true, type: 'allergen' },
-            order: [['sortOrder', 'ASC']],
-         });
-
-         res.json({
-            data: tags.map(t => ({
-               slug: t.slug,
-               name: t.name,
-               icon: t.icon,
-            })),
-         });
-      } catch (error) {
-         next(error);
+         const filters = await menuScheduleService.getCachedFilters();
+         apiResponse.success(res, filters);
+      } catch (err) {
+         handleControllerError(res, err, { operation: 'publicGetFilters' });
       }
    },
 
-   /**
-    * GET /nutrition/addons
-    *
-    * Получить список добавок
-    */
-   async getAddons(req: Request, res: Response, next: NextFunction) {
+   async getAddons(req: Request, res: Response): Promise<void> {
       try {
          const { category } = req.query;
+         const addons = await menuScheduleService.getCachedAddons();
 
-         const where: any = { isActive: true };
-         if (category) where.category = category;
+         // Filter by category if specified
+         const filtered = category
+            ? addons.filter((a) => a.category === category)
+            : addons;
 
-         const addons = await Addon.findAll({
-            where,
-            order: [['sortOrder', 'ASC']],
-         });
-
-         res.json({
-            data: addons.map(a => ({
-               id: a.id,
-               name: a.name,
-               description: a.description,
-               imageUrl: a.imageUrl,
-               category: a.category,
-               calories: a.calories,
-               proteins: Number(a.proteins),
-               fats: Number(a.fats),
-               carbs: Number(a.carbs),
-               priceTiyin: Number(a.priceTiyin),
-               maxPerDay: a.maxPerDay,
-            })),
-         });
-      } catch (error) {
-         next(error);
+         apiResponse.success(res, filtered);
+      } catch (err) {
+         handleControllerError(res, err, { operation: 'publicGetAddons' });
       }
    },
 };
 
 // ═══════════════════════════════════════════════════════════════════════
-// CART (Корзина по дням)
+// CART
 // ═══════════════════════════════════════════════════════════════════════
 
 export const publicCartController = {
-   /**
-    * GET /nutrition/cart
-    *
-    * Получить корзину (сырые данные)
-    */
-   async getCart(req: Request, res: Response, next: NextFunction) {
+   async getCart(req: Request, res: Response): Promise<void> {
       try {
          const sessionToken = req.headers['x-session-token'] as string;
-
          if (!sessionToken) {
-            return res.status(400).json({ error: 'x-session-token header required' });
+            apiResponse.badRequest(res, 'x-session-token header required');
+            return;
          }
 
          const cart = await calendarCartService.getCart(sessionToken);
-
-         res.json({
-            data: cart || { days: [], preferences: { excludeAllergens: [] } },
-         });
-      } catch (error) {
-         next(error);
+         apiResponse.success(
+            res,
+            cart || { days: [], preferences: { excludeAllergens: [] } },
+         );
+      } catch (err) {
+         handleControllerError(res, err, { operation: 'publicGetCart' });
       }
    },
 
-   /**
-    * POST /nutrition/cart/day
-    *
-    * Добавить день в корзину
-    * Body: { date: "YYYY-MM-DD" }
-    */
-   async addDay(req: Request, res: Response, next: NextFunction) {
+   async addDay(req: Request, res: Response): Promise<void> {
       try {
          const sessionToken = req.headers['x-session-token'] as string;
          if (!sessionToken) {
-            return res.status(400).json({ error: 'x-session-token header required' });
+            apiResponse.badRequest(res, 'x-session-token header required');
+            return;
          }
 
          const { date } = req.body;
          if (!date) {
-            return res.status(400).json({ error: 'date is required' });
+            apiResponse.badRequest(res, 'date is required');
+            return;
          }
 
          const cart = await calendarCartService.addDay(sessionToken, date);
-         res.json({ data: cart });
-      } catch (error) {
-         next(error);
+         apiResponse.success(res, cart);
+      } catch (err) {
+         handleControllerError(res, err, { operation: 'publicCartAddDay' });
       }
    },
 
-   /**
-    * DELETE /nutrition/cart/day/:date
-    *
-    * Удалить день из корзины
-    */
-   async removeDay(req: Request, res: Response, next: NextFunction) {
+   async removeDay(req: Request, res: Response): Promise<void> {
       try {
          const sessionToken = req.headers['x-session-token'] as string;
          if (!sessionToken) {
-            return res.status(400).json({ error: 'x-session-token header required' });
+            apiResponse.badRequest(res, 'x-session-token header required');
+            return;
          }
 
          const { date } = req.params;
          const cart = await calendarCartService.removeDay(sessionToken, date);
-
-         res.json({ data: cart });
-      } catch (error) {
-         next(error);
+         apiResponse.success(res, cart);
+      } catch (err) {
+         handleControllerError(res, err, { operation: 'publicCartRemoveDay' });
       }
    },
 
-   /**
-    * POST /nutrition/cart/meal
-    *
-    * Установить блюдо на день
-    * Body: { date, mealType, dishId, scheduleId, quantity? }
-    */
-   async setMeal(req: Request, res: Response, next: NextFunction) {
+   async setMeal(req: Request, res: Response): Promise<void> {
       try {
          const sessionToken = req.headers['x-session-token'] as string;
          if (!sessionToken) {
-            return res.status(400).json({ error: 'x-session-token header required' });
+            apiResponse.badRequest(res, 'x-session-token header required');
+            return;
          }
 
          const { date, mealType, dishId, scheduleId, quantity = 1 } = req.body;
 
          if (!date || !mealType || !dishId || !scheduleId) {
-            return res.status(400).json({
-               error: 'date, mealType, dishId, and scheduleId are required',
-            });
+            apiResponse.badRequest(
+               res,
+               'date, mealType, dishId, and scheduleId are required',
+            );
+            return;
          }
 
-         // Validate mealType
-         const validMealTypes: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack'];
+         const validMealTypes: MealType[] = [
+            'breakfast',
+            'lunch',
+            'dinner',
+            'snack',
+         ];
          if (!validMealTypes.includes(mealType)) {
-            return res.status(400).json({ error: 'Invalid mealType' });
+            apiResponse.badRequest(res, 'Invalid mealType');
+            return;
          }
 
          const cart = await calendarCartService.setMeal(
@@ -282,181 +211,165 @@ export const publicCartController = {
             mealType,
             dishId,
             scheduleId,
-            quantity
+            quantity,
          );
-
-         res.json({ data: cart });
-      } catch (error) {
-         next(error);
+         apiResponse.success(res, cart);
+      } catch (err) {
+         handleControllerError(res, err, { operation: 'publicCartSetMeal' });
       }
    },
 
-   /**
-    * DELETE /nutrition/cart/meal
-    *
-    * Удалить блюдо с дня
-    * Body: { date, mealType }
-    */
-   async removeMeal(req: Request, res: Response, next: NextFunction) {
+   async removeMeal(req: Request, res: Response): Promise<void> {
       try {
          const sessionToken = req.headers['x-session-token'] as string;
          if (!sessionToken) {
-            return res.status(400).json({ error: 'x-session-token header required' });
+            apiResponse.badRequest(res, 'x-session-token header required');
+            return;
          }
 
          const { date, mealType } = req.body;
-
-         const cart = await calendarCartService.removeMeal(sessionToken, date, mealType);
-         res.json({ data: cart });
-      } catch (error) {
-         next(error);
+         const cart = await calendarCartService.removeMeal(
+            sessionToken,
+            date,
+            mealType,
+         );
+         apiResponse.success(res, cart);
+      } catch (err) {
+         handleControllerError(res, err, { operation: 'publicCartRemoveMeal' });
       }
    },
 
-   /**
-    * POST /nutrition/cart/addon
-    *
-    * Добавить добавку на день
-    * Body: { date, addonId, quantity? }
-    */
-   async addAddon(req: Request, res: Response, next: NextFunction) {
+   async addAddon(req: Request, res: Response): Promise<void> {
       try {
          const sessionToken = req.headers['x-session-token'] as string;
          if (!sessionToken) {
-            return res.status(400).json({ error: 'x-session-token header required' });
+            apiResponse.badRequest(res, 'x-session-token header required');
+            return;
          }
 
          const { date, addonId, quantity = 1 } = req.body;
-
          if (!date || !addonId) {
-            return res.status(400).json({ error: 'date and addonId are required' });
+            apiResponse.badRequest(res, 'date and addonId are required');
+            return;
          }
 
-         const cart = await calendarCartService.addAddon(sessionToken, date, addonId, quantity);
-         res.json({ data: cart });
-      } catch (error) {
-         next(error);
+         const cart = await calendarCartService.addAddon(
+            sessionToken,
+            date,
+            addonId,
+            quantity,
+         );
+         apiResponse.success(res, cart);
+      } catch (err) {
+         handleControllerError(res, err, { operation: 'publicCartAddAddon' });
       }
    },
 
-   /**
-    * PUT /nutrition/cart/addon
-    *
-    * Обновить количество добавки
-    * Body: { date, addonId, quantity }
-    */
-   async updateAddon(req: Request, res: Response, next: NextFunction) {
+   async updateAddon(req: Request, res: Response): Promise<void> {
       try {
          const sessionToken = req.headers['x-session-token'] as string;
          if (!sessionToken) {
-            return res.status(400).json({ error: 'x-session-token header required' });
+            apiResponse.badRequest(res, 'x-session-token header required');
+            return;
          }
 
          const { date, addonId, quantity } = req.body;
-
          const cart = await calendarCartService.updateAddonQuantity(
             sessionToken,
             date,
             addonId,
-            quantity
+            quantity,
          );
-
-         res.json({ data: cart });
-      } catch (error) {
-         next(error);
+         apiResponse.success(res, cart);
+      } catch (err) {
+         handleControllerError(res, err, {
+            operation: 'publicCartUpdateAddon',
+         });
       }
    },
 
-   /**
-    * DELETE /nutrition/cart/addon
-    *
-    * Удалить добавку
-    * Body: { date, addonId }
-    */
-   async removeAddon(req: Request, res: Response, next: NextFunction) {
+   async removeAddon(req: Request, res: Response): Promise<void> {
       try {
          const sessionToken = req.headers['x-session-token'] as string;
          if (!sessionToken) {
-            return res.status(400).json({ error: 'x-session-token header required' });
+            apiResponse.badRequest(res, 'x-session-token header required');
+            return;
          }
 
          const { date, addonId } = req.body;
-
-         const cart = await calendarCartService.removeAddon(sessionToken, date, addonId);
-         res.json({ data: cart });
-      } catch (error) {
-         next(error);
+         const cart = await calendarCartService.removeAddon(
+            sessionToken,
+            date,
+            addonId,
+         );
+         apiResponse.success(res, cart);
+      } catch (err) {
+         handleControllerError(res, err, {
+            operation: 'publicCartRemoveAddon',
+         });
       }
    },
 
-   /**
-    * POST /nutrition/cart/slot
-    *
-    * Установить слот доставки на день
-    * Body: { date, slotId }
-    */
-   async setDeliverySlot(req: Request, res: Response, next: NextFunction) {
+   async setDeliverySlot(req: Request, res: Response): Promise<void> {
       try {
          const sessionToken = req.headers['x-session-token'] as string;
          if (!sessionToken) {
-            return res.status(400).json({ error: 'x-session-token header required' });
+            apiResponse.badRequest(res, 'x-session-token header required');
+            return;
          }
 
          const { date, slotId } = req.body;
-
          if (!date || !slotId) {
-            return res.status(400).json({ error: 'date and slotId are required' });
+            apiResponse.badRequest(res, 'date and slotId are required');
+            return;
          }
 
-         const cart = await calendarCartService.setDeliverySlot(sessionToken, date, slotId);
-         res.json({ data: cart });
-      } catch (error) {
-         next(error);
+         const cart = await calendarCartService.setDeliverySlot(
+            sessionToken,
+            date,
+            slotId,
+         );
+         apiResponse.success(res, cart);
+      } catch (err) {
+         handleControllerError(res, err, {
+            operation: 'publicCartSetDeliverySlot',
+         });
       }
    },
 
-   /**
-    * POST /nutrition/cart/preferences
-    *
-    * Установить предпочтения (исключаемые аллергены)
-    * Body: { excludeAllergens: ["fish", "nuts"] }
-    */
-   async setPreferences(req: Request, res: Response, next: NextFunction) {
+   async setPreferences(req: Request, res: Response): Promise<void> {
       try {
          const sessionToken = req.headers['x-session-token'] as string;
          if (!sessionToken) {
-            return res.status(400).json({ error: 'x-session-token header required' });
+            apiResponse.badRequest(res, 'x-session-token header required');
+            return;
          }
 
          const { excludeAllergens = [] } = req.body;
-
          const cart = await calendarCartService.setExcludedAllergens(
             sessionToken,
-            excludeAllergens
+            excludeAllergens,
          );
-
-         res.json({ data: cart });
-      } catch (error) {
-         next(error);
+         apiResponse.success(res, cart);
+      } catch (err) {
+         handleControllerError(res, err, {
+            operation: 'publicCartSetPreferences',
+         });
       }
    },
 
-   /**
-    * DELETE /nutrition/cart
-    *
-    * Очистить корзину
-    */
-   async clearCart(req: Request, res: Response, next: NextFunction) {
+   async clearCart(req: Request, res: Response): Promise<void> {
       try {
          const sessionToken = req.headers['x-session-token'] as string;
          if (!sessionToken) {
-            return res.status(400).json({ error: 'x-session-token header required' });
+            apiResponse.badRequest(res, 'x-session-token header required');
+            return;
          }
 
          await calendarCartService.clearCart(sessionToken);
-         res.status(204).send();
-      } catch (error) {
-         next(error);
+         apiResponse.noContent(res);
+      } catch (err) {
+         handleControllerError(res, err, { operation: 'publicCartClear' });
       }
    },
 };
@@ -466,25 +379,12 @@ export const publicCartController = {
 // ═══════════════════════════════════════════════════════════════════════
 
 export const publicCheckoutController = {
-   /**
-    * POST /nutrition/checkout
-    *
-    * Оформить заказ
-    * Body: {
-    *   customerName,
-    *   customerPhone,
-    *   deliveryAddress,
-    *   deliveryLat?,
-    *   deliveryLng?,
-    *   deliveryNotes?,
-    *   paymentMethod: "cash" | "click" | "payme"
-    * }
-    */
-   async checkout(req: Request, res: Response, next: NextFunction) {
+   async checkout(req: Request, res: Response): Promise<void> {
       try {
          const sessionToken = req.headers['x-session-token'] as string;
          if (!sessionToken) {
-            return res.status(400).json({ error: 'x-session-token header required' });
+            apiResponse.badRequest(res, 'x-session-token header required');
+            return;
          }
 
          const {
@@ -497,16 +397,23 @@ export const publicCheckoutController = {
             paymentMethod,
          } = req.body;
 
-         // Validation
-         if (!customerName || !customerPhone || !deliveryAddress || !paymentMethod) {
-            return res.status(400).json({
-               error: 'customerName, customerPhone, deliveryAddress, and paymentMethod are required',
-            });
+         if (
+            !customerName ||
+            !customerPhone ||
+            !deliveryAddress ||
+            !paymentMethod
+         ) {
+            apiResponse.badRequest(
+               res,
+               'customerName, customerPhone, deliveryAddress, and paymentMethod are required',
+            );
+            return;
          }
 
          const validPaymentMethods = ['cash', 'click', 'payme'];
          if (!validPaymentMethods.includes(paymentMethod)) {
-            return res.status(400).json({ error: 'Invalid paymentMethod' });
+            apiResponse.badRequest(res, 'Invalid paymentMethod');
+            return;
          }
 
          const result = await calendarCheckoutService.checkout({
@@ -520,18 +427,69 @@ export const publicCheckoutController = {
             paymentMethod,
          });
 
-         res.status(201).json({
-            data: {
-               orderId: result.order.id,
-               orderNumber: result.order.orderNumber,
-               status: result.order.status,
-               totalTiyin: Number(result.order.totalTiyin),
-               totalCalories: result.order.totalCalories,
-               paymentUrl: result.paymentUrl,
-            },
+         apiResponse.created(res, {
+            orderId: result.order.id,
+            orderNumber: result.order.orderNumber,
+            status: result.order.status,
+            subtotalTiyin: Number(result.order.subtotalTiyin),
+            discountTiyin: Number(result.order.discountTiyin),
+            deliveryFeeTiyin: Number(result.order.deliveryFeeTiyin),
+            totalTiyin: Number(result.order.totalTiyin),
+            totalCalories: result.order.totalCalories,
+            subscriptionPlan: result.order.snapshotPlanName
+               ? {
+                    name: result.order.snapshotPlanName,
+                    daysCount: result.order.snapshotPlanDaysCount,
+                    discountPercent: result.order.snapshotPlanDiscountPercent,
+                 }
+               : null,
+            paymentUrl: result.paymentUrl,
          });
-      } catch (error) {
-         next(error);
+      } catch (err) {
+         handleControllerError(res, err, { operation: 'publicCheckout' });
+      }
+   },
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// SUBSCRIPTION PLANS (Public)
+// ═══════════════════════════════════════════════════════════════════════
+
+export const publicPlanController = {
+   async list(_req: Request, res: Response): Promise<void> {
+      try {
+         const plans = await subscriptionPlanRepository.findAll({
+            isActive: true,
+         });
+         apiResponse.success(res, plans);
+      } catch (err) {
+         handleControllerError(res, err, { operation: 'publicPlanList' });
+      }
+   },
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// CART: SET PLAN
+// ═══════════════════════════════════════════════════════════════════════
+
+export const publicCartPlanController = {
+   async setPlan(req: Request, res: Response): Promise<void> {
+      try {
+         const sessionToken = req.headers['x-session-token'] as string;
+         if (!sessionToken) {
+            apiResponse.badRequest(res, 'x-session-token header is required');
+            return;
+         }
+
+         const { planId } = req.body;
+         // planId может быть null (снять план)
+         const cart = await calendarCartService.setPlan(
+            sessionToken,
+            planId ?? null,
+         );
+         apiResponse.success(res, { planId: cart.planId });
+      } catch (err) {
+         handleControllerError(res, err, { operation: 'publicCartSetPlan' });
       }
    },
 };

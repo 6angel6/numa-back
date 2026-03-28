@@ -3,6 +3,8 @@ import {
    publicMenuController,
    publicCartController,
    publicCheckoutController,
+   publicPlanController,
+   publicCartPlanController,
 } from './controller/publicController';
 import {
    dishCmsController,
@@ -10,6 +12,7 @@ import {
    menuScheduleCmsController,
    deliverySlotCmsController,
    tagCmsController,
+   subscriptionPlanCmsController,
 } from './controller/cmsController';
 import { requireAuth, requirePermission } from '../../shared/middleware/auth';
 import { Permission } from '../admin/dto/permissionDto';
@@ -28,6 +31,12 @@ router.get('/filters', publicMenuController.getFilters);
 router.get('/addons', publicMenuController.getAddons);
 
 // ═══════════════════════════════════════════════════════════════════════
+// PUBLIC: SUBSCRIPTION PLANS
+// ═══════════════════════════════════════════════════════════════════════
+
+router.get('/plans', publicPlanController.list);
+
+// ═══════════════════════════════════════════════════════════════════════
 // PUBLIC: CALENDAR CART
 // ═══════════════════════════════════════════════════════════════════════
 // Корзина сгруппирована по дням с КБЖУ
@@ -41,6 +50,7 @@ router.post('/cart/addon', publicCartController.addAddon);
 router.put('/cart/addon', publicCartController.updateAddon);
 router.delete('/cart/addon', publicCartController.removeAddon);
 router.post('/cart/slot', publicCartController.setDeliverySlot);
+router.post('/cart/plan', publicCartPlanController.setPlan);
 router.post('/cart/preferences', publicCartController.setPreferences);
 router.delete('/cart', publicCartController.clearCart);
 
@@ -54,145 +64,204 @@ router.post('/checkout', publicCheckoutController.checkout);
 // CMS: DISHES
 // ═══════════════════════════════════════════════════════════════════════
 
-router.get('/cms/dishes',
+router.get(
+   '/cms/dishes',
    requireAuth,
    requirePermission(Permission.DISHES_READ),
-   dishCmsController.list
+   dishCmsController.list,
 );
-router.get('/cms/dishes/:id',
+router.get(
+   '/cms/dishes/:id',
    requireAuth,
    requirePermission(Permission.DISHES_READ),
-   dishCmsController.getById
+   dishCmsController.getById,
 );
-router.post('/cms/dishes',
+router.post(
+   '/cms/dishes',
    requireAuth,
    requirePermission(Permission.DISHES_WRITE),
-   dishCmsController.create
+   dishCmsController.create,
 );
-router.put('/cms/dishes/:id',
+router.put(
+   '/cms/dishes/:id',
    requireAuth,
    requirePermission(Permission.DISHES_WRITE),
-   dishCmsController.update
+   dishCmsController.update,
 );
-router.delete('/cms/dishes/:id',
+router.delete(
+   '/cms/dishes/:id',
    requireAuth,
    requirePermission(Permission.DISHES_DELETE),
-   dishCmsController.delete
+   dishCmsController.delete,
 );
 
 // ═══════════════════════════════════════════════════════════════════════
 // CMS: ADDONS
 // ═══════════════════════════════════════════════════════════════════════
 
-router.get('/cms/addons',
+router.get(
+   '/cms/addons',
    requireAuth,
    requirePermission(Permission.DISHES_READ),
-   addonCmsController.list
+   addonCmsController.list,
 );
-router.post('/cms/addons',
+router.post(
+   '/cms/addons',
    requireAuth,
    requirePermission(Permission.DISHES_WRITE),
-   addonCmsController.create
+   addonCmsController.create,
 );
-router.put('/cms/addons/:id',
+router.put(
+   '/cms/addons/:id',
    requireAuth,
    requirePermission(Permission.DISHES_WRITE),
-   addonCmsController.update
+   addonCmsController.update,
 );
-router.delete('/cms/addons/:id',
+router.delete(
+   '/cms/addons/:id',
    requireAuth,
    requirePermission(Permission.DISHES_DELETE),
-   addonCmsController.delete
+   addonCmsController.delete,
 );
 
 // ═══════════════════════════════════════════════════════════════════════
 // CMS: MENU SCHEDULE (Главное для календарного меню)
 // ═══════════════════════════════════════════════════════════════════════
 
-router.get('/cms/schedule',
+router.get(
+   '/cms/schedule',
    requireAuth,
    requirePermission(Permission.DISHES_READ),
-   menuScheduleCmsController.getSchedule
+   menuScheduleCmsController.getSchedule,
 );
-router.post('/cms/schedule',
+router.post(
+   '/cms/schedule',
    requireAuth,
    requirePermission(Permission.DISHES_WRITE),
-   menuScheduleCmsController.addToSchedule
+   menuScheduleCmsController.addToSchedule,
 );
-router.post('/cms/schedule/bulk',
+router.post(
+   '/cms/schedule/bulk',
    requireAuth,
    requirePermission(Permission.DISHES_WRITE),
-   menuScheduleCmsController.bulkAddToDate
+   menuScheduleCmsController.bulkAddToDate,
 );
-router.post('/cms/schedule/copy',
+router.post(
+   '/cms/schedule/copy',
    requireAuth,
    requirePermission(Permission.DISHES_WRITE),
-   menuScheduleCmsController.copySchedule
+   menuScheduleCmsController.copySchedule,
 );
-router.delete('/cms/schedule/:id',
+router.delete(
+   '/cms/schedule/:id',
    requireAuth,
    requirePermission(Permission.DISHES_DELETE),
-   menuScheduleCmsController.removeFromSchedule
+   menuScheduleCmsController.removeFromSchedule,
 );
-router.patch('/cms/schedule/:id/toggle',
+router.patch(
+   '/cms/schedule/:id/toggle',
    requireAuth,
    requirePermission(Permission.DISHES_WRITE),
-   menuScheduleCmsController.toggleAvailability
+   menuScheduleCmsController.toggleAvailability,
 );
 
 // ═══════════════════════════════════════════════════════════════════════
 // CMS: DELIVERY SLOTS
 // ═══════════════════════════════════════════════════════════════════════
 
-router.get('/cms/slots',
+router.get(
+   '/cms/slots',
    requireAuth,
    requirePermission(Permission.DELIVERY_SLOTS_READ),
-   deliverySlotCmsController.list
+   deliverySlotCmsController.list,
 );
-router.post('/cms/slots',
+router.post(
+   '/cms/slots',
    requireAuth,
    requirePermission(Permission.DELIVERY_SLOTS_WRITE),
-   deliverySlotCmsController.create
+   deliverySlotCmsController.create,
 );
-router.post('/cms/slots/generate',
+router.post(
+   '/cms/slots/generate',
    requireAuth,
    requirePermission(Permission.DELIVERY_SLOTS_WRITE),
-   deliverySlotCmsController.generateSlots
+   deliverySlotCmsController.generateSlots,
 );
-router.put('/cms/slots/:id',
+router.put(
+   '/cms/slots/:id',
    requireAuth,
    requirePermission(Permission.DELIVERY_SLOTS_WRITE),
-   deliverySlotCmsController.update
+   deliverySlotCmsController.update,
 );
-router.delete('/cms/slots/:id',
+router.delete(
+   '/cms/slots/:id',
    requireAuth,
    requirePermission(Permission.DELIVERY_SLOTS_WRITE),
-   deliverySlotCmsController.delete
+   deliverySlotCmsController.delete,
 );
 
 // ═══════════════════════════════════════════════════════════════════════
 // CMS: TAGS (Allergens & Filters)
 // ═══════════════════════════════════════════════════════════════════════
 
-router.get('/cms/tags',
+router.get(
+   '/cms/tags',
    requireAuth,
    requirePermission(Permission.DISHES_READ),
-   tagCmsController.list
+   tagCmsController.list,
 );
-router.post('/cms/tags',
+router.post(
+   '/cms/tags',
    requireAuth,
    requirePermission(Permission.DISHES_WRITE),
-   tagCmsController.create
+   tagCmsController.create,
 );
-router.put('/cms/tags/:id',
+router.put(
+   '/cms/tags/:id',
    requireAuth,
    requirePermission(Permission.DISHES_WRITE),
-   tagCmsController.update
+   tagCmsController.update,
 );
-router.delete('/cms/tags/:id',
+router.delete(
+   '/cms/tags/:id',
    requireAuth,
    requirePermission(Permission.DISHES_DELETE),
-   tagCmsController.delete
+   tagCmsController.delete,
+);
+
+// ═══════════════════════════════════════════════════════════════════════
+// CMS: SUBSCRIPTION PLANS
+// ═══════════════════════════════════════════════════════════════════════
+
+router.get(
+   '/cms/plans',
+   requireAuth,
+   requirePermission(Permission.SUBSCRIPTION_PLANS_READ),
+   subscriptionPlanCmsController.list,
+);
+router.get(
+   '/cms/plans/:id',
+   requireAuth,
+   requirePermission(Permission.SUBSCRIPTION_PLANS_READ),
+   subscriptionPlanCmsController.getById,
+);
+router.post(
+   '/cms/plans',
+   requireAuth,
+   requirePermission(Permission.SUBSCRIPTION_PLANS_WRITE),
+   subscriptionPlanCmsController.create,
+);
+router.put(
+   '/cms/plans/:id',
+   requireAuth,
+   requirePermission(Permission.SUBSCRIPTION_PLANS_WRITE),
+   subscriptionPlanCmsController.update,
+);
+router.delete(
+   '/cms/plans/:id',
+   requireAuth,
+   requirePermission(Permission.SUBSCRIPTION_PLANS_DELETE),
+   subscriptionPlanCmsController.delete,
 );
 
 export default router;
